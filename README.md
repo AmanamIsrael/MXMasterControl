@@ -100,7 +100,8 @@ open "dist/MX Master Control.app" --args --show-settings
 ```
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for design boundaries and
-[docs/VALIDATION.md](docs/VALIDATION.md) for current hardware evidence.
+[docs/VALIDATION.md](docs/VALIDATION.md) for current hardware evidence, and
+[docs/COMPLETION-AUDIT.md](docs/COMPLETION-AUDIT.md) for the requirement-by-requirement status.
 
 ## License
 

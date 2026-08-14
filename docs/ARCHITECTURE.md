@@ -8,6 +8,8 @@ hard boundaries around hardware access.
 - `MXMasterCore`: pure, testable value types, HID++ packet models, configuration, and state
   reconciliation.
 - `MXMasterHID`: macOS IOHID discovery, transport, report delivery, and device lifecycle.
+- `MXMasterActions`: gesture/button interpretation handoff, Accessibility checks, and macOS event
+  posting behind an injectable action sink.
 - `mxmasterctl`: a permanent diagnostic surface that remains usable without the graphical app.
 - `MXMasterControl`: the SwiftUI menu-bar extra, Settings scene, and AppKit lifecycle integration.
 

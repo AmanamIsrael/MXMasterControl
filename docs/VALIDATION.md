@@ -142,3 +142,15 @@ Status: passed on 2026-08-14.
   removed the binding from the configuration file.
 - The 15-second physical event diagnostic armed and restored all controls successfully, but no
   physical button was pressed during that window, so end-to-end event dispatch remains pending.
+
+### Action pipeline tests
+
+Status: passed on 2026-08-14.
+
+- A configured SmartShift press reaches the injected action sink exactly once; repeated held-state
+  packets do not duplicate the action.
+- Gesture press, raw movement, and release dispatch the dominant configured direction.
+- Every action that requires event posting maps to a concrete macOS key code and modifier set;
+  System Default and Do Nothing intentionally map to no synthetic event.
+- These tests exercise the same `MXMasterActions` coordinator used by the bundled app. Physical HID
+  packets plus Accessibility-authorized system posting still require the manual check below.

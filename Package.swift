@@ -8,6 +8,7 @@ let package = Package(
   products: [
     .library(name: "MXMasterCore", targets: ["MXMasterCore"]),
     .library(name: "MXMasterHID", targets: ["MXMasterHID"]),
+    .library(name: "MXMasterActions", targets: ["MXMasterActions"]),
     .executable(name: "MXMasterControl", targets: ["MXMasterControl"]),
     .executable(name: "mxmasterctl", targets: ["mxmasterctl"]),
   ],
@@ -18,17 +19,21 @@ let package = Package(
       dependencies: ["MXMasterCore"],
       linkerSettings: [.linkedFramework("IOKit")]
     ),
+    .target(
+      name: "MXMasterActions",
+      dependencies: ["MXMasterCore"],
+      linkerSettings: [.linkedFramework("ApplicationServices")]
+    ),
     .executableTarget(
       name: "mxmasterctl",
       dependencies: ["MXMasterCore", "MXMasterHID"]
     ),
     .executableTarget(
       name: "MXMasterControl",
-      dependencies: ["MXMasterCore", "MXMasterHID"],
+      dependencies: ["MXMasterActions", "MXMasterCore", "MXMasterHID"],
       path: "Sources/MXMasterControlApp",
       linkerSettings: [
         .linkedFramework("AppKit"),
-        .linkedFramework("ApplicationServices"),
         .linkedFramework("ServiceManagement"),
       ]
     ),
@@ -39,6 +44,10 @@ let package = Package(
     .testTarget(
       name: "MXMasterHIDTests",
       dependencies: ["MXMasterCore", "MXMasterHID"]
+    ),
+    .testTarget(
+      name: "MXMasterActionsTests",
+      dependencies: ["MXMasterActions", "MXMasterCore"]
     ),
   ],
   swiftLanguageModes: [.v6]
