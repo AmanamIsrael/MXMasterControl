@@ -25,6 +25,11 @@ public struct HIDPPControlCaptureRoundTrip {
     let channel = try HIDPPDeviceChannel()
     defer { channel.close() }
     let protocolInfo = try HIDPPReadOnlyProbe().probeFeatures(channel: channel)
+    _ = try HIDPPControlReportingReconciler().reconcile(
+      controls: MouseControl.allCases,
+      channel: channel,
+      protocolInfo: protocolInfo
+    )
     let session = try HIDPPControlCaptureSession(
       channel: channel,
       protocolInfo: protocolInfo,

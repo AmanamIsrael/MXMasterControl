@@ -43,7 +43,7 @@ public struct HIDPPReadOnlyProbe {
     )
   }
 
-  func probeFeatures(channel: HIDPPDeviceChannel) throws -> HIDPPProbeResult {
+  public func probeFeatures(channel: HIDPPDeviceChannel) throws -> HIDPPProbeResult {
 
     let ping = try channel.send(
       HIDPPMessage(featureIndex: 0, functionID: 1, payload: [0, 0, 0])

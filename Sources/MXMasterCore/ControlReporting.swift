@@ -49,6 +49,15 @@ public struct ControlReportingState: Codable, Equatable, Sendable {
     return payload
   }
 
+  /// Clears only volatile diversion and raw-movement values while preserving persistent remaps
+  /// and every other reporting field.
+  public var nativePassthroughPayload: [UInt8] {
+    var payload = restorationPayload
+    payload[2] &= ~(1 << 0)
+    payload[2] &= ~(1 << 4)
+    return payload
+  }
+
   private var basePayload: [UInt8] {
     var payload = Array(repeating: UInt8(0), count: 16)
     payload[0] = UInt8(controlID >> 8)

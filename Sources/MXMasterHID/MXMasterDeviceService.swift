@@ -123,9 +123,14 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     try await perform { service in
       try service.captureSession?.close()
       service.captureSession = nil
+      let (channel, protocolInfo) = try service.connection()
+      _ = try HIDPPControlReportingReconciler().reconcile(
+        controls: MouseControl.allCases,
+        channel: channel,
+        protocolInfo: protocolInfo
+      )
       guard !requests.isEmpty else { return }
 
-      let (channel, protocolInfo) = try service.connection()
       service.captureSession = try HIDPPControlCaptureSession(
         channel: channel,
         protocolInfo: protocolInfo,

@@ -26,6 +26,8 @@ main run loop.
   healthy idle connection has no polling timer.
 - A new generation cancels old requests, re-probes features, reconciles desired settings, and
   re-arms volatile control diversion.
+- Before arming desired mappings, the session clears stale non-persistent diversion on supported
+  secondary controls. It never clears or overwrites a persistent remap.
 - Control capture reads and preserves reporting state, changes only temporary diversion fields,
   and restores the original state when the capture session closes.
 - Only Back, Forward, Gesture, and SmartShift are eligible for capture. Primary buttons are outside

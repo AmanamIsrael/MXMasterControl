@@ -124,3 +124,21 @@ Status: automated/UI portions passed on 2026-08-14; physical button input pendin
 - Command-Q used the asynchronous application termination path and the process exited normally.
 - A post-exit hardware read confirmed DPI 1000, SmartShift threshold 10, and non-inverted wheel.
 - Physical side-button presses and gesture movement still require user input to validate end to end.
+
+### Volatile reporting reconciliation
+
+Status: passed on 2026-08-14.
+
+- A new read-only reporting probe found stale temporary diversion on Gesture (`0x00c3`) while all
+  configured mappings were native.
+- Reconciliation cleared only that non-persistent diversion and read it back as false. Persistent
+  diversion, remap, analytics, force-raw, and raw-wheel fields are preserved by construction.
+- A second read-only probe showed Back, Forward, Gesture, and SmartShift all native.
+- With SmartShift configured as Do Nothing, the UI reported `Active` and the hardware probe showed
+  only `0x00c4` temporarily diverted.
+- Command-Q restored `0x00c4`; all four controls read native after process exit.
+- Relaunch loaded the version-2 configuration and re-armed only `0x00c4`.
+- Changing SmartShift to System Default while running restored native reporting without restart and
+  removed the binding from the configuration file.
+- The 15-second physical event diagnostic armed and restored all controls successfully, but no
+  physical button was pressed during that window, so end-to-end event dispatch remains pending.

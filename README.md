@@ -35,6 +35,21 @@ Read the current supported settings and reprogrammable-control table:
 
 ```sh
 swift run mxmasterctl --read-state
+swift run mxmasterctl --read-control-reporting
+```
+
+If an interrupted development session leaves a secondary control temporarily diverted, restore
+native volatile reporting without touching persistent remaps:
+
+```sh
+swift run mxmasterctl --restore-native-control-reporting
+```
+
+For a bounded physical-input check, the capture command arms the four secondary controls for 15
+seconds, prints JSON events, and verifies restoration before it exits:
+
+```sh
+swift run mxmasterctl --capture-events
 ```
 
 A development-only reversible DPI round-trip is also available. It always attempts to restore
