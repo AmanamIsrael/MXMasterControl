@@ -22,7 +22,10 @@ let package = Package(
     .target(
       name: "MXMasterActions",
       dependencies: ["MXMasterCore"],
-      linkerSettings: [.linkedFramework("ApplicationServices")]
+      linkerSettings: [
+        .linkedFramework("AppKit"),
+        .linkedFramework("ApplicationServices"),
+      ]
     ),
     .executableTarget(
       name: "mxmasterctl",

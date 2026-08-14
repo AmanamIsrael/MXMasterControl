@@ -8,8 +8,8 @@ hard boundaries around hardware access.
 - `MXMasterCore`: pure, testable value types, HID++ packet models, configuration, and state
   reconciliation.
 - `MXMasterHID`: macOS IOHID discovery, transport, report delivery, and device lifecycle.
-- `MXMasterActions`: gesture/button interpretation handoff, Accessibility checks, and macOS event
-  posting behind an injectable action sink.
+- `MXMasterActions`: gesture/button interpretation handoff, Accessibility checks, and macOS action
+  and phased desktop-swipe posting behind injectable sinks.
 - `mxmasterctl`: a permanent diagnostic surface that remains usable without the graphical app.
 - `MXMasterControl`: the SwiftUI menu-bar extra, Settings scene, and AppKit lifecycle integration.
 
@@ -18,13 +18,16 @@ actor through one serialized device session. A helper process is not part of the
 unlike legacy IOBluetooth RFCOMM, IOHID can be isolated on its own queue without owning the AppKit
 main run loop.
 
+The application delegate starts the controller at process launch. Menu-bar content remains lazy,
+but hardware connection and configured controls do not depend on opening the menu or Settings.
+
 ## State rules
 
 - Saved configuration is desired state; the mouse is the source of actual state.
 - Every supported write is followed by a read-back before the UI reports success.
 - Device removal, mouse wake, Mac wake, permission restoration, and stale delivery recreate the
   session and increment its generation.
-- Device removal is callback-driven. A five-second retry task exists only while disconnected, so a
+- Device removal is callback-driven. A two-second retry task exists only while disconnected, so a
   healthy idle connection has no polling timer.
 - A new generation cancels old requests, re-probes features, reconciles desired settings, and
   re-arms volatile control diversion.
@@ -36,8 +39,14 @@ main run loop.
   the action model, so a configuration bug cannot disable basic pointing and clicking.
 - Native behavior is the default. If an action needs Accessibility and access is unavailable, the
   app restores native reporting instead of intercepting the button.
-- Gesture interpretation and action planning are pure `MXMasterCore` state, while macOS event
-  posting remains in the app target.
+- Gesture interpretation and action planning are pure `MXMasterCore` state. Horizontal desktop
+  gestures emit a streamed begin/change/end sequence so the Space follows the held mouse movement;
+  all macOS event posting remains isolated in `MXMasterActions`.
+- A settings change, disconnect, or app shutdown explicitly cancels any in-progress desktop swipe
+  before control capture is replaced or closed.
+- The undocumented Dock-swipe event encoding required for trackpad-style Space transitions is
+  confined to one synthesizer. The rest of the app depends only on typed `DesktopSwipeUpdate`
+  values, keeping future macOS-specific changes local.
 - Firmware update commands are permanently outside the project scope.
 
 ## Dependency policy

@@ -171,6 +171,7 @@ final class MouseController: ObservableObject {
   func shutdown() async {
     reconnectTask?.cancel()
     reconnectTask = nil
+    actionCoordinator.cancelPendingGesture()
     await service.invalidate()
   }
 
@@ -274,6 +275,7 @@ final class MouseController: ObservableObject {
   }
 
   private func handleDeviceDisconnected() {
+    actionCoordinator.cancelPendingGesture()
     snapshot = nil
     connectionState = .disconnected
     controlCaptureActive = false
@@ -286,7 +288,7 @@ final class MouseController: ObservableObject {
       defer { self?.reconnectTask = nil }
       while !Task.isCancelled {
         do {
-          try await Task.sleep(for: .seconds(5))
+          try await Task.sleep(for: .seconds(2))
         } catch {
           return
         }

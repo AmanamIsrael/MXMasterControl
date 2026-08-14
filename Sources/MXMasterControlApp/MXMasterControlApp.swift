@@ -28,6 +28,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
   private var terminationPrepared = false
 
   func applicationDidFinishLaunching(_ notification: Notification) {
+    MouseController.shared.start()
     guard CommandLine.arguments.contains("--show-settings") else { return }
     NSApp.setActivationPolicy(.regular)
     let window = NSWindow(

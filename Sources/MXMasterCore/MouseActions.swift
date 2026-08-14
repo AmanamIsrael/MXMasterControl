@@ -146,25 +146,74 @@ public enum ControlCapturePlanner {
   }
 }
 
+public struct DesktopSwipeUpdate: Equatable, Sendable {
+  public enum Phase: Equatable, Sendable {
+    case began
+    case changed
+    case ended
+    case cancelled
+  }
+
+  public let phase: Phase
+  public let deltaX: Int32
+
+  public init(phase: Phase, deltaX: Int32) {
+    self.phase = phase
+    self.deltaX = deltaX
+  }
+}
+
+public enum MouseInputEffect: Equatable, Sendable {
+  case action(MouseAction)
+  case desktopSwipe(DesktopSwipeUpdate)
+}
+
 public struct ControlEventInterpreter: Sendable {
+  private enum GestureMode: Sendable {
+    case undecided
+    case discrete
+    case desktopSwipe(directionMultiplier: Int32)
+  }
+
   private let configuration: MXMasterConfiguration
   private let movementThreshold: Int32
+  private let swipeActivationThreshold: Int32
   private var pressedControls: Set<UInt16> = []
   private var gestureMovementX: Int32 = 0
   private var gestureMovementY: Int32 = 0
+  private var gestureMode = GestureMode.undecided
 
-  public init(configuration: MXMasterConfiguration, movementThreshold: Int32 = 40) {
+  public init(
+    configuration: MXMasterConfiguration,
+    movementThreshold: Int32 = 40,
+    swipeActivationThreshold: Int32 = 20
+  ) {
     self.configuration = configuration
     self.movementThreshold = movementThreshold
+    self.swipeActivationThreshold = swipeActivationThreshold
   }
 
-  public mutating func handle(_ event: HIDPPControlEvent) -> [MouseAction] {
+  public mutating func handle(_ event: HIDPPControlEvent) -> [MouseInputEffect] {
     switch event {
     case .rawMovement(let dx, let dy):
       guard pressedControls.contains(MouseControl.gesture.rawValue) else { return [] }
       gestureMovementX = Int32(clamping: Int64(gestureMovementX) + Int64(dx))
       gestureMovementY = Int32(clamping: Int64(gestureMovementY) + Int64(dy))
-      return []
+
+      switch gestureMode {
+      case .desktopSwipe(let directionMultiplier):
+        return [
+          .desktopSwipe(
+            DesktopSwipeUpdate(
+              phase: .changed,
+              deltaX: Int32(clamping: Int64(dx) * Int64(directionMultiplier))
+            ))
+        ]
+      case .discrete:
+        return []
+      case .undecided:
+        return activateGestureIfNeeded()
+      }
 
     case .divertedButtons(let currentControls):
       let current = Set(currentControls)
@@ -172,39 +221,88 @@ public struct ControlEventInterpreter: Sendable {
       let released = pressedControls.subtracting(current)
       pressedControls = current
 
-      var actions: [MouseAction] = []
+      var effects: [MouseInputEffect] = []
       for controlID in pressed.sorted() {
         guard let control = MouseControl(rawValue: controlID) else { continue }
         if control == .gesture, configuration.gestureNavigationEnabled {
           gestureMovementX = 0
           gestureMovementY = 0
+          gestureMode = .undecided
         } else {
-          append(configuration.action(for: control), to: &actions)
+          append(configuration.action(for: control), to: &effects)
         }
       }
 
       if released.contains(MouseControl.gesture.rawValue), configuration.gestureNavigationEnabled {
-        append(gestureAction(), to: &actions)
+        if case .desktopSwipe = gestureMode {
+          effects.append(
+            .desktopSwipe(DesktopSwipeUpdate(phase: .ended, deltaX: 0)))
+        } else {
+          append(gestureAction(), to: &effects)
+        }
         gestureMovementX = 0
         gestureMovementY = 0
+        gestureMode = .undecided
       }
-      return actions
+      return effects
     }
+  }
+
+  public mutating func cancelPendingGesture() -> MouseInputEffect? {
+    defer {
+      pressedControls.remove(MouseControl.gesture.rawValue)
+      gestureMovementX = 0
+      gestureMovementY = 0
+      gestureMode = .undecided
+    }
+    guard case .desktopSwipe = gestureMode else { return nil }
+    return .desktopSwipe(DesktopSwipeUpdate(phase: .cancelled, deltaX: 0))
+  }
+
+  private mutating func activateGestureIfNeeded() -> [MouseInputEffect] {
+    let horizontal = abs(Int64(gestureMovementX))
+    let vertical = abs(Int64(gestureMovementY))
+    guard max(horizontal, vertical) >= swipeActivationThreshold else { return [] }
+
+    guard horizontal > vertical else {
+      gestureMode = .discrete
+      return []
+    }
+
+    let gestures = configuration.gestureActions
+    let directionMultiplier: Int32
+    if gestures.left == .desktopLeft, gestures.right == .desktopRight {
+      directionMultiplier = 1
+    } else if gestures.left == .desktopRight, gestures.right == .desktopLeft {
+      directionMultiplier = -1
+    } else {
+      gestureMode = .discrete
+      return []
+    }
+
+    gestureMode = .desktopSwipe(directionMultiplier: directionMultiplier)
+    return [
+      .desktopSwipe(
+        DesktopSwipeUpdate(
+          phase: .began,
+          deltaX: Int32(clamping: Int64(gestureMovementX) * Int64(directionMultiplier))
+        ))
+    ]
   }
 
   private func gestureAction() -> MouseAction {
     let gestures = configuration.gestureActions
-    let horizontal = abs(gestureMovementX)
-    let vertical = abs(gestureMovementY)
-    guard max(horizontal, vertical) >= movementThreshold else { return gestures.click }
+    let horizontal = abs(Int64(gestureMovementX))
+    let vertical = abs(Int64(gestureMovementY))
+    guard max(horizontal, vertical) >= Int64(movementThreshold) else { return gestures.click }
     if horizontal > vertical {
       return gestureMovementX < 0 ? gestures.left : gestures.right
     }
     return gestureMovementY < 0 ? gestures.up : gestures.down
   }
 
-  private func append(_ action: MouseAction, to actions: inout [MouseAction]) {
+  private func append(_ action: MouseAction, to effects: inout [MouseInputEffect]) {
     guard action.postsKeyboardEvent else { return }
-    actions.append(action)
+    effects.append(.action(action))
   }
 }

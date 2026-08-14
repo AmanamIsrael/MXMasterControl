@@ -22,6 +22,23 @@ private final class ActionRecorder: @unchecked Sendable {
   }
 }
 
+private final class SwipeRecorder: @unchecked Sendable {
+  private let lock = NSLock()
+  private var recordedUpdates: [DesktopSwipeUpdate] = []
+
+  func record(_ update: DesktopSwipeUpdate) {
+    lock.lock()
+    recordedUpdates.append(update)
+    lock.unlock()
+  }
+
+  var updates: [DesktopSwipeUpdate] {
+    lock.lock()
+    defer { lock.unlock() }
+    return recordedUpdates
+  }
+}
+
 @Test func coordinatorDispatchesConfiguredButtonActionOncePerPress() {
   var configuration = MXMasterConfiguration()
   configuration.setAction(.missionControl, for: .smartShift)
@@ -40,17 +57,40 @@ private final class ActionRecorder: @unchecked Sendable {
 
 @Test func coordinatorDispatchesGestureAfterMovementAndRelease() {
   let configuration = MXMasterConfiguration(gestureNavigationEnabled: true)
-  let recorder = ActionRecorder()
+  let actionRecorder = ActionRecorder()
+  let swipeRecorder = SwipeRecorder()
   let coordinator = MouseActionCoordinator(
     configuration: configuration,
-    postAction: recorder.record
+    postAction: actionRecorder.record,
+    postDesktopSwipe: swipeRecorder.record
   )
 
   coordinator.handle(.divertedButtons([MouseControl.gesture.rawValue]))
   coordinator.handle(.rawMovement(dx: -50, dy: 3))
   coordinator.handle(.divertedButtons([]))
 
-  #expect(recorder.actions == [.desktopLeft])
+  #expect(actionRecorder.actions.isEmpty)
+  #expect(
+    swipeRecorder.updates == [
+      DesktopSwipeUpdate(phase: .began, deltaX: -50),
+      DesktopSwipeUpdate(phase: .ended, deltaX: 0),
+    ])
+}
+
+@Test func coordinatorCancelsActiveSwipeBeforeReplacingConfiguration() {
+  let configuration = MXMasterConfiguration(gestureNavigationEnabled: true)
+  let swipeRecorder = SwipeRecorder()
+  let coordinator = MouseActionCoordinator(
+    configuration: configuration,
+    postAction: { _ in },
+    postDesktopSwipe: swipeRecorder.record
+  )
+
+  coordinator.handle(.divertedButtons([MouseControl.gesture.rawValue]))
+  coordinator.handle(.rawMovement(dx: 50, dy: 0))
+  coordinator.update(configuration: MXMasterConfiguration())
+
+  #expect(swipeRecorder.updates.last?.phase == .cancelled)
 }
 
 @Test func everyPostableActionHasAKeyboardShortcut() {
@@ -60,4 +100,6 @@ private final class ActionRecorder: @unchecked Sendable {
   }
   #expect(MouseActionDispatcher.shortcut(for: .back)?.flags == .maskCommand)
   #expect(MouseActionDispatcher.shortcut(for: .desktopRight)?.flags == .maskControl)
+  #expect(MouseActionDispatcher.modifierKeys(for: .maskControl).map(\.keyCode) == [59])
+  #expect(MouseActionDispatcher.modifierKeys(for: .maskCommand).map(\.keyCode) == [55])
 }

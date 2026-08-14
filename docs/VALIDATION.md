@@ -102,20 +102,24 @@ Status: passed on 2026-08-14.
 
 ### Performance and lifecycle
 
-Status: automated portions passed on 2026-08-14; physical power-cycle test pending.
+Status: passed on 2026-08-15; sleep/wake remains optional manual coverage.
 
-- Release app bundle: 1.2 MB, with no third-party runtime dependencies.
+- Release app bundle: 1.3 MB, with no third-party runtime dependencies.
 - Normal menu-bar idle: 15.0 MB physical footprint and 0.0% sampled CPU after launch.
 - Settings window open: 40.1 MB physical footprint and 0.0% sampled CPU after settling.
 - The HID device registers a removal callback; removal invalidates the vanished session without
   blocking on dead-channel restoration.
-- Reconnect checks run every five seconds only while disconnected. Mac wake and screen wake also
+- Reconnect checks run every two seconds only while disconnected. Mac wake and screen wake also
   invalidate, reopen, re-probe, reconcile settings, and re-arm configured volatile controls.
-- A real mouse power-off/on validation still requires a physical user action.
+- During a real mouse power cycle, the UI transitioned from Connected to Mouse not found, then to
+  Connecting and back to Connected.
+- Once reconnect entered Connecting, it reached Connected in approximately three seconds.
+- Hardware reads after reconnect confirmed desired 1900 DPI, SmartShift threshold 10, reversed
+  scrolling, and Gesture temporary diversion with raw movement all reapplied.
 
 ### Action safety and clean shutdown
 
-Status: automated/UI portions passed on 2026-08-14; physical button input pending.
+Status: passed on physical hardware on 2026-08-15.
 
 - All four mappings default to System Default and Diagnostics reports `Native`.
 - Selecting Mission Control for SmartShift without Accessibility displayed remediation while
@@ -123,7 +127,20 @@ Status: automated/UI portions passed on 2026-08-14; physical button input pendin
 - Restoring System Default removed the desired binding from the version-2 configuration file.
 - Command-Q used the asynchronous application termination path and the process exited normally.
 - A post-exit hardware read confirmed DPI 1000, SmartShift threshold 10, and non-inverted wheel.
-- Physical side-button presses and gesture movement still require user input to validate end to end.
+- Bounded real-device capture observed Back (`0x0053`), Forward (`0x0056`), Gesture (`0x00c3`),
+  SmartShift (`0x00c4`), matching releases, and hundreds of signed raw-movement packets.
+- Production app logs observed `desktopLeft`, `desktopRight`, and `missionControl` classification
+  from physical Gesture input.
+- Mission Control uses the public system application launcher and logged successful launch.
+- Desktop switching emits phased Dock-swipe events from the live HID++ raw-movement stream rather
+  than a shortcut after release. The user confirmed that desktops follow the held mouse movement,
+  settle correctly on release, and work in both directions.
+- The mouse-oriented direction was reversed after physical testing and the user confirmed the
+  resulting interaction feels natural.
+- Lifecycle cancellation covers configuration replacement, device removal, and app shutdown so an
+  interrupted swipe cannot leave a transition active.
+- A normal menu-bar-only launch, without opening any app UI, read back Gesture `0x00c3` as diverted
+  with raw movement. This closes a discovered bug where lazy `MenuBarExtra` content delayed startup.
 
 ### Volatile reporting reconciliation
 
@@ -140,17 +157,21 @@ Status: passed on 2026-08-14.
 - Relaunch loaded the version-2 configuration and re-armed only `0x00c4`.
 - Changing SmartShift to System Default while running restored native reporting without restart and
   removed the binding from the configuration file.
-- The 15-second physical event diagnostic armed and restored all controls successfully, but no
-  physical button was pressed during that window, so end-to-end event dispatch remains pending.
+- Two 15-second physical captures recorded 265 and 203 events respectively, covering all four
+  secondary control IDs, release packets, and raw movement. Both runs restored all controls.
 
 ### Action pipeline tests
 
-Status: passed on 2026-08-14.
+Status: passed on 2026-08-15.
 
 - A configured SmartShift press reaches the injected action sink exactly once; repeated held-state
   packets do not duplicate the action.
-- Gesture press, raw movement, and release dispatch the dominant configured direction.
+- Gesture press and raw horizontal movement stream begin/change/end desktop-swipe updates; vertical
+  and click gestures retain dominant-direction discrete action dispatch.
+- Tests cover direction reversal, vertical axis lock, and cancellation of an active swipe during a
+  lifecycle/configuration change.
 - Every action that requires event posting maps to a concrete macOS key code and modifier set;
   System Default and Do Nothing intentionally map to no synthetic event.
-- These tests exercise the same `MXMasterActions` coordinator used by the bundled app. Physical HID
-  packets plus Accessibility-authorized system posting still require the manual check below.
+- These tests exercise the same `MXMasterActions` coordinator used by the bundled app. Production
+  unified logs additionally confirmed physical HID input reached the Accessibility-authorized
+  action posting path.
