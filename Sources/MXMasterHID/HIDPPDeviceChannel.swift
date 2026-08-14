@@ -54,12 +54,17 @@ public final class HIDPPDeviceChannel: @unchecked Sendable {
   private let responseCondition = NSCondition()
   private let eventHandlerLock = NSLock()
   private let cancellationSemaphore = DispatchSemaphore(value: 0)
+  private let disconnectHandler: (@Sendable () -> Void)?
   private var pendingResponse: PendingResponse?
   private var eventHandler: (@Sendable (HIDPPMessage) -> Void)?
   private var isClosed = false
 
-  public init(identifier: USBIdentifier = HIDDeviceDescriptor.targetIdentifier) throws {
+  public init(
+    identifier: USBIdentifier = HIDDeviceDescriptor.targetIdentifier,
+    onDisconnect: (@Sendable () -> Void)? = nil
+  ) throws {
     manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+    disconnectHandler = onDisconnect
     inputBuffer = .allocate(capacity: 64)
     inputBuffer.initialize(repeating: 0, count: 64)
 
@@ -114,6 +119,15 @@ public final class HIDPPDeviceChannel: @unchecked Sendable {
           report: report,
           reportLength: reportLength
         )
+      },
+      Unmanaged.passUnretained(self).toOpaque()
+    )
+    IOHIDDeviceRegisterRemovalCallback(
+      device,
+      { context, _, _ in
+        guard let context else { return }
+        let channel = Unmanaged<HIDPPDeviceChannel>.fromOpaque(context).takeUnretainedValue()
+        channel.disconnectHandler?()
       },
       Unmanaged.passUnretained(self).toOpaque()
     )

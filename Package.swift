@@ -28,6 +28,7 @@ let package = Package(
       path: "Sources/MXMasterControlApp",
       linkerSettings: [
         .linkedFramework("AppKit"),
+        .linkedFramework("ApplicationServices"),
         .linkedFramework("ServiceManagement"),
       ]
     ),

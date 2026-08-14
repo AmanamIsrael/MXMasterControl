@@ -34,12 +34,22 @@ final class MouseController: ObservableObject {
   @Published private(set) var configuration: MXMasterConfiguration
   @Published var launchAtLogin: Bool
   @Published private(set) var launchAtLoginError: String?
+  @Published private(set) var accessibilityGranted: Bool
+  @Published private(set) var actionError: String?
+  @Published private(set) var controlCaptureActive = false
 
-  private let service = MXMasterDeviceService()
+  private lazy var service = MXMasterDeviceService { [weak self] in
+    Task { @MainActor [weak self] in
+      self?.handleDeviceDisconnected()
+    }
+  }
   private let configurationStore: ConfigurationStore
+  private let actionCoordinator: MouseActionCoordinator
   // This controller lives for the app's lifetime, so its observers remain registered until exit.
   // That also avoids callbacks racing actor-isolated teardown.
   private var workspaceObservers: [NSObjectProtocol] = []
+  private var applicationObservers: [NSObjectProtocol] = []
+  private var reconnectTask: Task<Void, Never>?
 
   init() {
     let applicationSupport = FileManager.default.urls(
@@ -52,8 +62,11 @@ final class MouseController: ObservableObject {
         .appendingPathComponent("MXMasterControl", isDirectory: true)
         .appendingPathComponent("config.json")
     )
-    configuration = (try? configurationStore.load()) ?? MXMasterConfiguration()
+    let loadedConfiguration = (try? configurationStore.load()) ?? MXMasterConfiguration()
+    configuration = loadedConfiguration
+    actionCoordinator = MouseActionCoordinator(configuration: loadedConfiguration)
     launchAtLogin = SMAppService.mainApp.status == .enabled
+    accessibilityGranted = MouseActionDispatcher.accessibilityGranted
     registerLifecycleObservers()
   }
 
@@ -91,6 +104,21 @@ final class MouseController: ObservableObject {
     }
   }
 
+  func setAction(_ action: MouseAction, for control: MouseControl) {
+    configuration.setAction(action, for: control)
+    persistAndApplyActions()
+  }
+
+  func setGestureNavigationEnabled(_ enabled: Bool) {
+    configuration.gestureNavigationEnabled = enabled
+    persistAndApplyActions()
+  }
+
+  func setGestureAction(_ action: MouseAction, for direction: GestureDirection) {
+    configuration.gestureActions.setAction(action, for: direction)
+    persistAndApplyActions()
+  }
+
   func setLaunchAtLogin(_ enabled: Bool) {
     do {
       if enabled {
@@ -112,6 +140,37 @@ final class MouseController: ObservableObject {
         string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")
     else { return }
     NSWorkspace.shared.open(url)
+  }
+
+  func requestInputMonitoringAccess() {
+    let access = IOHIDDeviceEnumerator().requestListenAccess()
+    if access == .granted {
+      Task {
+        await service.invalidate()
+        await loadState(reconcile: true)
+      }
+    } else {
+      connectionState = .permissionRequired
+    }
+  }
+
+  func requestAccessibilityAccess() {
+    accessibilityGranted = MouseActionDispatcher.requestAccessibility()
+    Task { await applyActionConfiguration() }
+  }
+
+  func openAccessibilitySettings() {
+    guard
+      let url = URL(
+        string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+    else { return }
+    NSWorkspace.shared.open(url)
+  }
+
+  func shutdown() async {
+    reconnectTask?.cancel()
+    reconnectTask = nil
+    await service.invalidate()
   }
 
   private func performSettingChange(
@@ -165,9 +224,14 @@ final class MouseController: ObservableObject {
       }
       snapshot = state
       connectionState = .connected
+      reconnectTask?.cancel()
+      reconnectTask = nil
+      await applyActionConfiguration()
     } catch {
       snapshot = nil
-      connectionState = classify(error)
+      let classifiedState = classify(error)
+      connectionState = classifiedState
+      if classifiedState == .disconnected { startReconnectLoop() }
     }
   }
 
@@ -182,6 +246,82 @@ final class MouseController: ObservableObject {
             await loadState(reconcile: true)
           }
         })
+    }
+
+    applicationObservers.append(
+      NotificationCenter.default.addObserver(
+        forName: NSApplication.didBecomeActiveNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self else { return }
+          accessibilityGranted = MouseActionDispatcher.accessibilityGranted
+          await applyActionConfiguration()
+        }
+      })
+  }
+
+  private func persistAndApplyActions() {
+    do {
+      try configurationStore.save(configuration)
+      actionCoordinator.update(configuration: configuration)
+      Task { await applyActionConfiguration() }
+    } catch {
+      actionError = error.localizedDescription
+    }
+  }
+
+  private func handleDeviceDisconnected() {
+    snapshot = nil
+    connectionState = .disconnected
+    controlCaptureActive = false
+    startReconnectLoop()
+  }
+
+  private func startReconnectLoop() {
+    guard reconnectTask == nil else { return }
+    reconnectTask = Task { [weak self] in
+      defer { self?.reconnectTask = nil }
+      while !Task.isCancelled {
+        do {
+          try await Task.sleep(for: .seconds(5))
+        } catch {
+          return
+        }
+        guard let self, connectionState == .disconnected else { return }
+        await loadState(reconcile: true)
+      }
+    }
+  }
+
+  private func applyActionConfiguration() async {
+    actionCoordinator.update(configuration: configuration)
+    accessibilityGranted = MouseActionDispatcher.accessibilityGranted
+    let requests = ControlCapturePlanner.requests(for: configuration)
+
+    if configuration.requiresAccessibility, !accessibilityGranted {
+      do {
+        try await service.configureControlCapture(requests: []) { _ in }
+        controlCaptureActive = false
+      } catch {
+        actionError = error.localizedDescription
+        return
+      }
+      actionError = "Accessibility is required before custom button actions can be enabled."
+      return
+    }
+
+    do {
+      let coordinator = actionCoordinator
+      try await service.configureControlCapture(requests: requests) { event in
+        coordinator.handle(event)
+      }
+      controlCaptureActive = !requests.isEmpty
+      actionError = nil
+    } catch {
+      controlCaptureActive = false
+      actionError = error.localizedDescription
     }
   }
 

@@ -27,6 +27,13 @@ public struct IOHIDDeviceEnumerator {
     }
   }
 
+  /// Presents macOS's Input Monitoring request and returns the resulting process access state.
+  /// This is intentionally explicit so TCC can attribute the request to the app bundle.
+  public func requestListenAccess() -> HIDAccessStatus {
+    _ = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+    return listenAccess
+  }
+
   public func enumerate(identifier: USBIdentifier? = nil) throws -> [HIDDeviceDescriptor] {
     let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
 

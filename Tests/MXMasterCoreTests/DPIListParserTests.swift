@@ -19,3 +19,10 @@ import Testing
   #expect(DPITestValueSelector.select(current: 1050, supported: [950, 1000, 1050]) == 1000)
   #expect(DPITestValueSelector.select(current: 1000, supported: [1000]) == nil)
 }
+
+@Test func smartShiftTestValueStaysInsideWritableRange() {
+  #expect(SmartShiftTestValueSelector.select(current: 10) == 11)
+  #expect(SmartShiftTestValueSelector.select(current: 0) == 1)
+  #expect(SmartShiftTestValueSelector.select(current: 254) == 253)
+  #expect(SmartShiftTestValueSelector.select(current: 255) == 253)
+}

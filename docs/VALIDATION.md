@@ -67,12 +67,60 @@ Status: passed on 2026-08-14.
 
 ### Bundled app
 
-Status: permission remediation verified; control validation pending Input Monitoring grant.
+Status: passed on 2026-08-14.
 
 - The signed app launches without crashing.
 - The Settings UI is accessible through the development launch path.
 - Without app-specific Input Monitoring access, IOHID returns `kIOReturnNotPermitted`.
 - The UI translates that status into permission guidance instead of exposing a numeric IOReturn.
-- The deep link opens the correct Input Monitoring pane and the app is present in its list.
-- The existing enabled entry was created by an earlier changing ad-hoc signature; a one-time
-  off/on toggle or remove/re-add is required to refresh the TCC record for the stable requirement.
+- The app explicitly requests access with `IOHIDRequestAccess` and links to the correct pane.
+- After removing the stale TCC record for an earlier ad-hoc build, the newly requested grant was
+  recognized on the next connection attempt.
+- The bundled process connected and displayed battery 100%, 1000 DPI, free-spin mode, SmartShift
+  threshold 10, and normal wheel direction.
+- There is no development signing identity on this host. Ad-hoc rebuilds can require permission
+  reauthorization; `MXMASTER_SIGNING_IDENTITY` selects stable signing when a certificate exists.
+
+### Reversible SmartShift and wheel round-trip
+
+Status: passed on 2026-08-14.
+
+- SmartShift threshold: 10 → 11 → 10; both the test value and restoration were read back.
+- SmartShift mode remained 1 (free spin) after restoration.
+- Wheel inversion: false → true → false; both the test value and restoration were read back.
+- A final read-only snapshot confirmed DPI 1000, SmartShift threshold 10, and non-inverted wheel.
+
+### Reversible control-capture round-trip
+
+Status: passed on 2026-08-14.
+
+- One shared HID++ channel temporarily diverted Back (`0x0053`), Forward (`0x0056`), Gesture
+  (`0x00c3`, with raw movement), and SmartShift (`0x00c4`).
+- Each diversion was read back before the session was considered armed.
+- Session close restored and read back every original reporting state.
+- A post-test device snapshot confirmed DPI 1000, SmartShift threshold 10, and non-inverted wheel.
+
+### Performance and lifecycle
+
+Status: automated portions passed on 2026-08-14; physical power-cycle test pending.
+
+- Release app bundle: 1.2 MB, with no third-party runtime dependencies.
+- Normal menu-bar idle: 15.0 MB physical footprint and 0.0% sampled CPU after launch.
+- Settings window open: 40.1 MB physical footprint and 0.0% sampled CPU after settling.
+- The HID device registers a removal callback; removal invalidates the vanished session without
+  blocking on dead-channel restoration.
+- Reconnect checks run every five seconds only while disconnected. Mac wake and screen wake also
+  invalidate, reopen, re-probe, reconcile settings, and re-arm configured volatile controls.
+- A real mouse power-off/on validation still requires a physical user action.
+
+### Action safety and clean shutdown
+
+Status: automated/UI portions passed on 2026-08-14; physical button input pending.
+
+- All four mappings default to System Default and Diagnostics reports `Native`.
+- Selecting Mission Control for SmartShift without Accessibility displayed remediation while
+  Diagnostics remained `Native`; the button was not diverted or swallowed.
+- Restoring System Default removed the desired binding from the version-2 configuration file.
+- Command-Q used the asynchronous application termination path and the process exited normally.
+- A post-exit hardware read confirmed DPI 1000, SmartShift threshold 10, and non-inverted wheel.
+- Physical side-button presses and gesture movement still require user input to validate end to end.

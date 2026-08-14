@@ -25,6 +25,7 @@ struct MXMasterControlApp: App {
 @MainActor
 private final class AppDelegate: NSObject, NSApplicationDelegate {
   private var developmentSettingsWindow: NSWindow?
+  private var terminationPrepared = false
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     guard CommandLine.arguments.contains("--show-settings") else { return }
@@ -45,5 +46,15 @@ private final class AppDelegate: NSObject, NSApplicationDelegate {
     developmentSettingsWindow = window
     NSApp.activate(ignoringOtherApps: true)
     window.makeKeyAndOrderFront(nil)
+  }
+
+  func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+    guard !terminationPrepared else { return .terminateNow }
+    Task {
+      await MouseController.shared.shutdown()
+      terminationPrepared = true
+      sender.reply(toApplicationShouldTerminate: true)
+    }
+    return .terminateLater
   }
 }

@@ -8,13 +8,15 @@ private enum Command: String {
   case probeFeatures = "--probe-features"
   case readState = "--read-state"
   case testDPIRoundTrip = "--test-dpi-round-trip"
+  case testSettingsRoundTrip = "--test-settings-round-trip"
+  case testControlCaptureRoundTrip = "--test-control-capture-round-trip"
   case help = "--help"
 }
 
 private func printHelp() {
   print(
     """
-    Usage: mxmasterctl [--diagnose | --probe-features | --read-state | --test-dpi-round-trip]
+    Usage: mxmasterctl [--diagnose | --probe-features | --read-state | --test-dpi-round-trip | --test-settings-round-trip | --test-control-capture-round-trip]
 
       --diagnose  Print a redacted, read-only JSON inventory for the connected MX Master 3.
       --probe-features
@@ -23,9 +25,13 @@ private func printHelp() {
                   Read supported mouse settings and controls without changing them.
       --test-dpi-round-trip
                   Set the next supported DPI, verify it, restore the original, and verify again.
+      --test-settings-round-trip
+                  Verify and restore SmartShift threshold and wheel inversion writes.
+      --test-control-capture-round-trip
+                  Temporarily divert the four supported secondary controls, then restore them.
       --help      Show this help.
 
-    Neither command changes device settings.
+    Diagnostic commands are read-only. Round-trip commands make temporary changes and restore them.
     """)
 }
 
@@ -83,6 +89,30 @@ case .readState:
 case .testDPIRoundTrip:
   do {
     let result = try HIDPPDPIRoundTrip().run()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    FileHandle.standardOutput.write(try encoder.encode(result))
+    FileHandle.standardOutput.write(Data("\n".utf8))
+  } catch {
+    fputs("mxmasterctl: \(error.localizedDescription)\n", stderr)
+    exit(1)
+  }
+
+case .testSettingsRoundTrip:
+  do {
+    let result = try HIDPPSettingsRoundTrip().run()
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+    FileHandle.standardOutput.write(try encoder.encode(result))
+    FileHandle.standardOutput.write(Data("\n".utf8))
+  } catch {
+    fputs("mxmasterctl: \(error.localizedDescription)\n", stderr)
+    exit(1)
+  }
+
+case .testControlCaptureRoundTrip:
+  do {
+    let result = try HIDPPControlCaptureRoundTrip().run()
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
     FileHandle.standardOutput.write(try encoder.encode(result))

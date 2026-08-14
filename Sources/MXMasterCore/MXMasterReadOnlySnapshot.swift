@@ -225,3 +225,63 @@ public enum DPITestValueSelector {
     supported.first(where: { $0 > current }) ?? supported.last(where: { $0 < current })
   }
 }
+
+public struct SmartShiftRoundTripResult: Codable, Equatable, Sendable {
+  public let originalMode: UInt8
+  public let originalThreshold: UInt8
+  public let testThreshold: UInt8
+  public let observedTestThreshold: UInt8
+  public let observedRestoredMode: UInt8
+  public let observedRestoredThreshold: UInt8
+
+  public init(
+    originalMode: UInt8,
+    originalThreshold: UInt8,
+    testThreshold: UInt8,
+    observedTestThreshold: UInt8,
+    observedRestoredMode: UInt8,
+    observedRestoredThreshold: UInt8
+  ) {
+    self.originalMode = originalMode
+    self.originalThreshold = originalThreshold
+    self.testThreshold = testThreshold
+    self.observedTestThreshold = observedTestThreshold
+    self.observedRestoredMode = observedRestoredMode
+    self.observedRestoredThreshold = observedRestoredThreshold
+  }
+}
+
+public struct WheelRoundTripResult: Codable, Equatable, Sendable {
+  public let originalInverted: Bool
+  public let testInverted: Bool
+  public let observedTestInverted: Bool
+  public let observedRestoredInverted: Bool
+
+  public init(
+    originalInverted: Bool,
+    testInverted: Bool,
+    observedTestInverted: Bool,
+    observedRestoredInverted: Bool
+  ) {
+    self.originalInverted = originalInverted
+    self.testInverted = testInverted
+    self.observedTestInverted = observedTestInverted
+    self.observedRestoredInverted = observedRestoredInverted
+  }
+}
+
+public struct SettingsRoundTripResult: Codable, Equatable, Sendable {
+  public let smartShift: SmartShiftRoundTripResult
+  public let wheel: WheelRoundTripResult
+
+  public init(smartShift: SmartShiftRoundTripResult, wheel: WheelRoundTripResult) {
+    self.smartShift = smartShift
+    self.wheel = wheel
+  }
+}
+
+public enum SmartShiftTestValueSelector {
+  public static func select(current: UInt8) -> UInt8 {
+    current >= 254 ? 253 : max(1, current + 1)
+  }
+}

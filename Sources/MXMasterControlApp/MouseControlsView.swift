@@ -17,7 +17,11 @@ struct MouseControlsView: View {
           )
           .font(.caption)
           .foregroundStyle(.secondary)
-          Button("Open Input Monitoring Settings") {
+          Button("Request Input Monitoring") {
+            controller.requestInputMonitoringAccess()
+          }
+          .buttonStyle(.borderedProminent)
+          Button("Open System Settings") {
             controller.openInputMonitoringSettings()
           }
         }

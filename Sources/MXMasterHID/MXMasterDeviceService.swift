@@ -25,10 +25,16 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   private let queue = DispatchQueue(label: "com.amanamisrael.MXMasterControl.device-service")
   private var channel: HIDPPDeviceChannel?
   private var protocolInfo: HIDPPProbeResult?
+  private var captureSession: HIDPPControlCaptureSession?
+  private var connectionGeneration: UInt64 = 0
+  private let disconnectHandler: @Sendable () -> Void
 
-  public init() {}
+  public init(onDisconnect: @escaping @Sendable () -> Void = {}) {
+    disconnectHandler = onDisconnect
+  }
 
   deinit {
+    try? captureSession?.close()
     channel?.close()
   }
 
@@ -110,9 +116,30 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     }
   }
 
+  public func configureControlCapture(
+    requests: [ControlCaptureRequest],
+    onEvent: @escaping @Sendable (HIDPPControlEvent) -> Void
+  ) async throws {
+    try await perform { service in
+      try service.captureSession?.close()
+      service.captureSession = nil
+      guard !requests.isEmpty else { return }
+
+      let (channel, protocolInfo) = try service.connection()
+      service.captureSession = try HIDPPControlCaptureSession(
+        channel: channel,
+        protocolInfo: protocolInfo,
+        requests: requests,
+        onEvent: onEvent
+      )
+    }
+  }
+
   public func invalidate() async {
     await withCheckedContinuation { continuation in
       queue.async { [self] in
+        try? captureSession?.close()
+        captureSession = nil
         channel?.close()
         channel = nil
         protocolInfo = nil
@@ -123,7 +150,11 @@ public final class MXMasterDeviceService: @unchecked Sendable {
 
   private func connection() throws -> (HIDPPDeviceChannel, HIDPPProbeResult) {
     if let channel, let protocolInfo { return (channel, protocolInfo) }
-    let newChannel = try HIDPPDeviceChannel()
+    connectionGeneration &+= 1
+    let generation = connectionGeneration
+    let newChannel = try HIDPPDeviceChannel { [weak self] in
+      self?.deviceDidDisconnect(generation: generation)
+    }
     do {
       let newProtocolInfo = try HIDPPReadOnlyProbe().probeFeatures(channel: newChannel)
       channel = newChannel
@@ -132,6 +163,18 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     } catch {
       newChannel.close()
       throw error
+    }
+  }
+
+  private func deviceDidDisconnect(generation: UInt64) {
+    queue.async { [weak self] in
+      guard let self, connectionGeneration == generation else { return }
+      captureSession?.abandonAfterDeviceRemoval()
+      captureSession = nil
+      channel?.close()
+      channel = nil
+      protocolInfo = nil
+      disconnectHandler()
     }
   }
 
@@ -148,6 +191,8 @@ public final class MXMasterDeviceService: @unchecked Sendable {
           continuation.resume(returning: try operation(self))
         } catch {
           if error is HIDPPChannelError {
+            try? captureSession?.close()
+            captureSession = nil
             channel?.close()
             channel = nil
             protocolInfo = nil
