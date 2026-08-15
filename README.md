@@ -1,5 +1,7 @@
 # MX Master Control
 
+![Settings window](docs/screenshot.png)
+
 A lightweight, native macOS controller for a Logitech MX Master 3 connected directly over
 Bluetooth. The project is intentionally scoped to the device currently under test: Logitech
 USB identifier `046d:b023`.
