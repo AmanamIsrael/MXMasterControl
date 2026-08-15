@@ -28,6 +28,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   private var captureSession: HIDPPControlCaptureSession?
   private var connectionGeneration: UInt64 = 0
   private var lastCaptureRequests: [ControlCaptureRequest] = []
+  private var cachedProbeResult: HIDPPProbeResult?
   private let disconnectHandler: @Sendable () -> Void
 
   public init(onDisconnect: @escaping @Sendable () -> Void = {}) {
@@ -125,6 +126,87 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     }
   }
 
+  /// Applies DPI without a redundant full state read. Verifies with a targeted
+  /// DPI read-back only. Use `readState()` separately for the full snapshot.
+  public func applyDPI(_ dpi: UInt16, supportedDPIs: [UInt16]? = nil) async throws {
+    try await perform { service in
+      let (channel, protocolInfo) = try service.connection()
+      guard let index = service.index(of: 0x2201, in: protocolInfo) else {
+        throw MXMasterServiceError.featureUnavailable(0x2201)
+      }
+      if let supportedDPIs {
+        guard supportedDPIs.contains(dpi) else {
+          throw MXMasterServiceError.unsupportedDPI(dpi)
+        }
+      } else {
+        let before = try HIDPPReadOnlyProbe().readDPIOnly(channel: channel, protocolInfo: protocolInfo)
+        guard before?.supported.contains(dpi) == true else {
+          throw MXMasterServiceError.unsupportedDPI(dpi)
+        }
+      }
+      _ = try channel.send(
+        HIDPPMessage(
+          featureIndex: index,
+          functionID: 3,
+          payload: [0, UInt8(dpi >> 8), UInt8(dpi & 0xFF)]
+        ))
+      let probe = HIDPPReadOnlyProbe()
+      let dpiSnapshot = try probe.readDPIOnly(channel: channel, protocolInfo: protocolInfo)
+      guard dpiSnapshot?.current == dpi else {
+        throw MXMasterServiceError.verificationFailed(setting: "DPI")
+      }
+    }
+  }
+
+  /// Applies SmartShift mode and threshold without a redundant full state read.
+  public func applySmartShift(
+    mode: SmartShiftMode,
+    threshold: UInt8
+  ) async throws {
+    guard (1...254).contains(threshold) else {
+      throw MXMasterServiceError.invalidSmartShiftThreshold(threshold)
+    }
+    try await perform { service in
+      let (channel, protocolInfo) = try service.connection()
+      guard let index = service.index(of: 0x2110, in: protocolInfo) else {
+        throw MXMasterServiceError.featureUnavailable(0x2110)
+      }
+      _ = try channel.send(
+        HIDPPMessage(
+          featureIndex: index,
+          functionID: 1,
+          payload: [mode.rawValue, threshold, 0]
+        ))
+      let after = try HIDPPReadOnlyProbe().readSmartShiftOnly(
+        channel: channel, protocolInfo: protocolInfo)
+      guard
+        after?.wheelModeCode == mode.rawValue,
+        after?.autoDisengage == threshold
+      else { throw MXMasterServiceError.verificationFailed(setting: "SmartShift state") }
+    }
+  }
+
+  /// Applies wheel inversion without a redundant full state read.
+  public func applyWheelInverted(_ inverted: Bool) async throws {
+    try await perform { service in
+      let (channel, protocolInfo) = try service.connection()
+      guard let index = service.index(of: 0x2121, in: protocolInfo) else {
+        throw MXMasterServiceError.featureUnavailable(0x2121)
+      }
+      let current = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
+      var modeByte = current.payload[0]
+      if inverted { modeByte |= 1 << 2 } else { modeByte &= ~(1 << 2) }
+      _ = try channel.send(
+        HIDPPMessage(featureIndex: index, functionID: 2, payload: [modeByte, 0, 0])
+      )
+      let after = try HIDPPReadOnlyProbe().readWheelOnly(
+        channel: channel, protocolInfo: protocolInfo)
+      guard after?.inverted == inverted else {
+        throw MXMasterServiceError.verificationFailed(setting: "wheel direction")
+      }
+    }
+  }
+
   public func configureControlCapture(
     requests: [ControlCaptureRequest],
     onEvent: @escaping @Sendable (HIDPPControlEvent) -> Void
@@ -170,15 +252,59 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     }
   }
 
-  private func connection() throws -> (HIDPPDeviceChannel, HIDPPProbeResult) {
-    if let channel, let protocolInfo { return (channel, protocolInfo) }
+  /// Polls for the device until it responds or `timeout` elapses. On success the
+  /// channel and protocol info are cached so the next operation reuses them.
+  /// Returns `true` if the device became ready.
+  public func waitForDevice(timeout: TimeInterval) async -> Bool {
+    await withCheckedContinuation { continuation in
+      queue.async { [self] in
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while Date() < deadline {
+          if self.attemptConnect() {
+            continuation.resume(returning: true)
+            return
+          }
+          Thread.sleep(forTimeInterval: 0.3)
+        }
+        continuation.resume(returning: false)
+      }
+    }
+  }
+
+  /// Tries to open a channel and establish protocol info using a cached feature
+  /// table when available. Returns `false` on any failure (caller should retry).
+  private func attemptConnect() -> Bool {
+    do {
+      _ = try establishConnection()
+      return true
+    } catch {
+      return false
+    }
+  }
+
+  /// Opens a channel and establishes protocol info, reusing a cached feature
+  /// table when the ping matches. On success, `channel` and `protocolInfo` are
+  /// set. On failure, any partially opened channel is closed and the error is
+  /// rethrown.
+  private func establishConnection() throws -> (HIDPPDeviceChannel, HIDPPProbeResult) {
     connectionGeneration &+= 1
     let generation = connectionGeneration
     let newChannel = try HIDPPDeviceChannel { [weak self] in
       self?.deviceDidDisconnect(generation: generation)
     }
     do {
+      if let cached = cachedProbeResult {
+        if let ping = try? newChannel.send(
+          HIDPPMessage(featureIndex: 0, functionID: 1, payload: [0, 0, 0]),
+          timeout: 0.5
+        ), ping.payload[0] == cached.protocolNumber {
+          channel = newChannel
+          protocolInfo = cached
+          return (newChannel, cached)
+        }
+      }
       let newProtocolInfo = try HIDPPReadOnlyProbe().probeFeatures(channel: newChannel)
+      cachedProbeResult = newProtocolInfo
       channel = newChannel
       protocolInfo = newProtocolInfo
       return (newChannel, newProtocolInfo)
@@ -186,6 +312,11 @@ public final class MXMasterDeviceService: @unchecked Sendable {
       newChannel.close()
       throw error
     }
+  }
+
+  private func connection() throws -> (HIDPPDeviceChannel, HIDPPProbeResult) {
+    if let channel, let protocolInfo { return (channel, protocolInfo) }
+    return try establishConnection()
   }
 
   private func deviceDidDisconnect(generation: UInt64) {

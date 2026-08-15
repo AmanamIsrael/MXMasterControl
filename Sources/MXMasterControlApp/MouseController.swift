@@ -221,10 +221,12 @@ final class MouseController: ObservableObject {
     connectionState = .connecting
     defer { isBusy = false }
     do {
-      var state = try await service.readState()
+      let state = try await service.readState()
+      var didWrite = false
       if reconcile {
         if let dpi = configuration.dpi, state.dpi?.current != dpi {
-          state = try await service.setDPI(dpi)
+          try await service.applyDPI(dpi, supportedDPIs: state.dpi?.supported)
+          didWrite = true
         }
         if let mode = configuration.smartShiftMode {
           let threshold =
@@ -234,14 +236,16 @@ final class MouseController: ObservableObject {
           if state.smartShift?.wheelModeCode != mode.rawValue
             || state.smartShift?.autoDisengage != threshold
           {
-            state = try await service.setSmartShift(mode: mode, threshold: threshold)
+            try await service.applySmartShift(mode: mode, threshold: threshold)
+            didWrite = true
           }
         }
         if let inverted = configuration.wheelInverted, state.wheel?.inverted != inverted {
-          state = try await service.setWheelInverted(inverted)
+          try await service.applyWheelInverted(inverted)
+          didWrite = true
         }
       }
-      snapshot = state
+      snapshot = didWrite ? try await service.readState() : state
       connectionState = .connected
       reconnectTask?.cancel()
       reconnectTask = nil
@@ -283,9 +287,14 @@ final class MouseController: ObservableObject {
             guard isSleeping else { return }
             isSleeping = false
             await service.invalidate()
-            try? await Task.sleep(for: .seconds(3))
+            let ready = await service.waitForDevice(timeout: 3)
             guard !isSleeping else { return }
-            await loadState(reconcile: true)
+            if ready {
+              await loadState(reconcile: true)
+            } else {
+              connectionState = .reconnecting
+              startReconnectLoop()
+            }
           }
         })
     }
@@ -329,11 +338,11 @@ final class MouseController: ObservableObject {
     guard reconnectTask == nil else { return }
     reconnectTask = Task { [weak self] in
       defer { self?.reconnectTask = nil }
-      var delay: UInt64 = 2_000_000_000
+      var delay: UInt64 = 1_000_000_000
       let maxDelay: UInt64 = 30_000_000_000
       while !Task.isCancelled {
         do {
-          try await Task.sleep(for: .seconds(2))
+          try await Task.sleep(for: .milliseconds(500))
         } catch {
           return
         }
