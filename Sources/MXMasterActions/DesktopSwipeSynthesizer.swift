@@ -53,32 +53,44 @@ final class DesktopSwipeSynthesizer: @unchecked Sendable {
       return
     }
 
-    // These fields mirror the WindowServer's Dock-swipe event representation on macOS 15–26.
-    gestureEvent.setDoubleValueField(Self.field(55), value: 29)
-    gestureEvent.setDoubleValueField(Self.field(41), value: 33_231)
+    guard
+      let f55 = Self.field(55), let f41 = Self.field(41),
+      let f110 = Self.field(110), let f132 = Self.field(132),
+      let f134 = Self.field(134), let f124 = Self.field(124),
+      let f135 = Self.field(135), let f119 = Self.field(119),
+      let f139 = Self.field(139), let f123 = Self.field(123),
+      let f165 = Self.field(165), let f136 = Self.field(136)
+    else {
+      Self.logger.error("Private CGEvent fields unavailable on this macOS version; desktop swipe disabled")
+      return
+    }
 
-    dockEvent.setDoubleValueField(Self.field(55), value: 30)
-    dockEvent.setDoubleValueField(Self.field(110), value: 23)
-    dockEvent.setIntegerValueField(Self.field(132), value: phase)
-    dockEvent.setIntegerValueField(Self.field(134), value: phase)
-    dockEvent.setDoubleValueField(Self.field(124), value: progress)
+    gestureEvent.setDoubleValueField(f55, value: 29)
+    gestureEvent.setDoubleValueField(f41, value: 33_231)
+
+    dockEvent.setDoubleValueField(f55, value: 30)
+    dockEvent.setDoubleValueField(f110, value: 23)
+    dockEvent.setIntegerValueField(f132, value: phase)
+    dockEvent.setIntegerValueField(f134, value: phase)
+    dockEvent.setDoubleValueField(f124, value: progress)
 
     let progressBits = Int64(UInt64(Float(progress).bitPattern))
-    dockEvent.setIntegerValueField(Self.field(135), value: progressBits)
-    dockEvent.setDoubleValueField(Self.field(41), value: 33_231)
+    dockEvent.setIntegerValueField(f135, value: progressBits)
+    dockEvent.setDoubleValueField(f41, value: 33_231)
 
-    // Horizontal Dock swipe (1), encoded both as a float-bit sentinel and an integer field.
     let horizontalSentinel = Double(Float.leastNonzeroMagnitude)
-    dockEvent.setDoubleValueField(Self.field(119), value: horizontalSentinel)
-    dockEvent.setDoubleValueField(Self.field(139), value: horizontalSentinel)
-    dockEvent.setDoubleValueField(Self.field(123), value: 1)
-    dockEvent.setDoubleValueField(Self.field(165), value: 1)
-    dockEvent.setIntegerValueField(Self.field(136), value: 0)
+    dockEvent.setDoubleValueField(f119, value: horizontalSentinel)
+    dockEvent.setDoubleValueField(f139, value: horizontalSentinel)
+    dockEvent.setDoubleValueField(f123, value: 1)
+    dockEvent.setDoubleValueField(f165, value: 1)
+    dockEvent.setIntegerValueField(f136, value: 0)
 
     if phase == 4 || phase == 8 {
       let exitSpeed = lastDelta * 100
-      dockEvent.setDoubleValueField(Self.field(129), value: exitSpeed)
-      dockEvent.setDoubleValueField(Self.field(130), value: exitSpeed)
+      if let f129 = Self.field(129), let f130 = Self.field(130) {
+        dockEvent.setDoubleValueField(f129, value: exitSpeed)
+        dockEvent.setDoubleValueField(f130, value: exitSpeed)
+      }
     }
 
     dockEvent.post(tap: .cgSessionEventTap)
@@ -107,8 +119,7 @@ final class DesktopSwipeSynthesizer: @unchecked Sendable {
     return 2.0 / (width + 63.0)
   }
 
-  private static func field(_ rawValue: UInt32) -> CGEventField {
-    // The private Dock fields are outside the public enum but accepted by CoreGraphics.
-    CGEventField(rawValue: rawValue)!
+  private static func field(_ rawValue: UInt32) -> CGEventField? {
+    CGEventField(rawValue: rawValue)
   }
 }

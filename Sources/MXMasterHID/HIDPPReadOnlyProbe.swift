@@ -43,6 +43,42 @@ public struct HIDPPReadOnlyProbe {
     )
   }
 
+  func readDPIOnly(
+    channel: HIDPPDeviceChannel,
+    protocolInfo: HIDPPProbeResult
+  ) throws -> DPISnapshot? {
+    guard let index = protocolInfo.features.first(where: { $0.featureID == 0x2201 })?.tableIndex
+    else { return nil }
+    return try readDPI(index: index, channel: channel)
+  }
+
+  func readSmartShiftOnly(
+    channel: HIDPPDeviceChannel,
+    protocolInfo: HIDPPProbeResult
+  ) throws -> SmartShiftSnapshot? {
+    guard let index = protocolInfo.features.first(where: { $0.featureID == 0x2110 })?.tableIndex
+    else { return nil }
+    return try readSmartShift(index: index, channel: channel)
+  }
+
+  func readWheelOnly(
+    channel: HIDPPDeviceChannel,
+    protocolInfo: HIDPPProbeResult
+  ) throws -> WheelSnapshot? {
+    guard let index = protocolInfo.features.first(where: { $0.featureID == 0x2121 })?.tableIndex
+    else { return nil }
+    return try readWheel(index: index, channel: channel)
+  }
+
+  func readBatteryOnly(
+    channel: HIDPPDeviceChannel,
+    protocolInfo: HIDPPProbeResult
+  ) throws -> BatterySnapshot? {
+    guard let index = protocolInfo.features.first(where: { $0.featureID == 0x1000 })?.tableIndex
+    else { return nil }
+    return try readBattery(index: index, channel: channel)
+  }
+
   public func probeFeatures(channel: HIDPPDeviceChannel) throws -> HIDPPProbeResult {
 
     let ping = try channel.send(

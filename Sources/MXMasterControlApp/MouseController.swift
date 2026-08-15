@@ -13,6 +13,7 @@ final class MouseController: ObservableObject {
     case connecting
     case connected
     case disconnected
+    case reconnecting
     case permissionRequired
     case blocked(String)
     case error(String)
@@ -22,9 +23,17 @@ final class MouseController: ObservableObject {
       case .connecting: "Connecting…"
       case .connected: "Connected"
       case .disconnected: "Mouse not found"
+      case .reconnecting: "Reconnecting…"
       case .permissionRequired: "Input Monitoring required"
       case .blocked(let app): "Quit \(app) to connect"
       case .error(let message): message
+      }
+    }
+
+    var isDisconnected: Bool {
+      switch self {
+      case .disconnected, .reconnecting: true
+      default: false
       }
     }
   }
@@ -51,6 +60,8 @@ final class MouseController: ObservableObject {
   private var workspaceObservers: [NSObjectProtocol] = []
   private var applicationObservers: [NSObjectProtocol] = []
   private var reconnectTask: Task<Void, Never>?
+  private var pendingSettingTask: Task<Void, Never>?
+  private var isSleeping = false
 
   init() {
     let applicationSupport = FileManager.default.urls(
@@ -82,7 +93,8 @@ final class MouseController: ObservableObject {
 
   func setDPI(_ dpi: UInt16) {
     performSettingChange {
-      let state = try await self.service.setDPI(dpi)
+      let supported = self.snapshot?.dpi?.supported
+      let state = try await self.service.setDPI(dpi, supportedDPIs: supported)
       self.configuration.dpi = dpi
       return state
     }
@@ -179,7 +191,7 @@ final class MouseController: ObservableObject {
     _ operation: @escaping @MainActor () async throws -> MXMasterReadOnlySnapshot
   ) {
     guard !isBusy else { return }
-    Task {
+    pendingSettingTask = Task {
       isBusy = true
       defer { isBusy = false }
       do {
@@ -187,13 +199,18 @@ final class MouseController: ObservableObject {
         try configurationStore.save(configuration)
         connectionState = .connected
       } catch {
-        connectionState = classify(error)
+        let classifiedState = classify(error)
+        connectionState = classifiedState
+        if classifiedState.isDisconnected {
+          handleDeviceDisconnected()
+        }
       }
+      pendingSettingTask = nil
     }
   }
 
   private func loadState(reconcile: Bool) async {
-    guard !isBusy else { return }
+    if isBusy { return }
     if let competitor = Self.runningCompetitor() {
       connectionState = .blocked(competitor)
       snapshot = nil
@@ -233,18 +250,41 @@ final class MouseController: ObservableObject {
       snapshot = nil
       let classifiedState = classify(error)
       connectionState = classifiedState
-      if classifiedState == .disconnected { startReconnectLoop() }
+      if classifiedState.isDisconnected { startReconnectLoop() }
     }
   }
 
   private func registerLifecycleObservers() {
     let center = NSWorkspace.shared.notificationCenter
+    for name in [NSWorkspace.willSleepNotification] {
+      workspaceObservers.append(
+        center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+          Task { @MainActor [weak self] in
+            guard let self else { return }
+            isSleeping = true
+            reconnectTask?.cancel()
+            reconnectTask = nil
+            pendingSettingTask?.cancel()
+            pendingSettingTask = nil
+            isBusy = false
+            snapshot = nil
+            controlCaptureActive = false
+            await service.invalidate()
+            connectionState = .disconnected
+          }
+        })
+    }
+
     for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
       workspaceObservers.append(
         center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
           Task { @MainActor [weak self] in
             guard let self else { return }
+            guard isSleeping else { return }
+            isSleeping = false
             await service.invalidate()
+            try? await Task.sleep(for: .seconds(3))
+            guard !isSleeping else { return }
             await loadState(reconcile: true)
           }
         })
@@ -276,8 +316,11 @@ final class MouseController: ObservableObject {
 
   private func handleDeviceDisconnected() {
     actionCoordinator.cancelPendingGesture()
+    pendingSettingTask?.cancel()
+    pendingSettingTask = nil
     snapshot = nil
-    connectionState = .disconnected
+    isBusy = false
+    connectionState = .reconnecting
     controlCaptureActive = false
     startReconnectLoop()
   }
@@ -286,14 +329,25 @@ final class MouseController: ObservableObject {
     guard reconnectTask == nil else { return }
     reconnectTask = Task { [weak self] in
       defer { self?.reconnectTask = nil }
+      var delay: UInt64 = 2_000_000_000
+      let maxDelay: UInt64 = 30_000_000_000
       while !Task.isCancelled {
         do {
           try await Task.sleep(for: .seconds(2))
         } catch {
           return
         }
-        guard let self, connectionState == .disconnected else { return }
-        await loadState(reconcile: true)
+        guard let self, self.connectionState.isDisconnected else { return }
+        await self.loadState(reconcile: true)
+        if self.connectionState == .connected {
+          return
+        }
+        delay = min(delay * 2, maxDelay)
+        do {
+          try await Task.sleep(for: .nanoseconds(delay))
+        } catch {
+          return
+        }
       }
     }
   }
@@ -331,7 +385,7 @@ final class MouseController: ObservableObject {
   private func classify(_ error: Error) -> ConnectionState {
     if let channelError = error as? HIDPPChannelError {
       switch channelError {
-      case .deviceNotFound: return .disconnected
+      case .deviceNotFound: return .reconnecting
       case .inputMonitoringDenied: return .permissionRequired
       default: break
       }

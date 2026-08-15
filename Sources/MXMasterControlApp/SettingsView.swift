@@ -8,7 +8,6 @@ struct SettingsView: View {
     Form {
       Section("Mouse") {
         MouseControlsView(controller: controller, compact: false)
-          .padding(-20)
       }
 
       Section("General") {
@@ -101,7 +100,7 @@ struct SettingsView: View {
       }
     }
     .formStyle(.grouped)
-    .frame(minWidth: 560, minHeight: 500)
+    .frame(minWidth: 400, minHeight: 400)
   }
 
   private func actionBinding(for control: MouseControl) -> Binding<MouseAction> {

@@ -27,6 +27,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   private var protocolInfo: HIDPPProbeResult?
   private var captureSession: HIDPPControlCaptureSession?
   private var connectionGeneration: UInt64 = 0
+  private var lastCaptureRequests: [ControlCaptureRequest] = []
   private let disconnectHandler: @Sendable () -> Void
 
   public init(onDisconnect: @escaping @Sendable () -> Void = {}) {
@@ -45,15 +46,21 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     }
   }
 
-  public func setDPI(_ dpi: UInt16) async throws -> MXMasterReadOnlySnapshot {
+  public func setDPI(_ dpi: UInt16, supportedDPIs: [UInt16]? = nil) async throws -> MXMasterReadOnlySnapshot {
     try await perform { service in
       let (channel, protocolInfo) = try service.connection()
       guard let index = service.index(of: 0x2201, in: protocolInfo) else {
         throw MXMasterServiceError.featureUnavailable(0x2201)
       }
-      let before = try HIDPPReadOnlyProbe().readState(channel: channel, protocolInfo: protocolInfo)
-      guard before.dpi?.supported.contains(dpi) == true else {
-        throw MXMasterServiceError.unsupportedDPI(dpi)
+      if let supportedDPIs {
+        guard supportedDPIs.contains(dpi) else {
+          throw MXMasterServiceError.unsupportedDPI(dpi)
+        }
+      } else {
+        let before = try HIDPPReadOnlyProbe().readDPIOnly(channel: channel, protocolInfo: protocolInfo)
+        guard before?.supported.contains(dpi) == true else {
+          throw MXMasterServiceError.unsupportedDPI(dpi)
+        }
       }
       _ = try channel.send(
         HIDPPMessage(
@@ -61,11 +68,13 @@ public final class MXMasterDeviceService: @unchecked Sendable {
           functionID: 3,
           payload: [0, UInt8(dpi >> 8), UInt8(dpi & 0xFF)]
         ))
-      let after = try HIDPPReadOnlyProbe().readState(channel: channel, protocolInfo: protocolInfo)
-      guard after.dpi?.current == dpi else {
+      let probe = HIDPPReadOnlyProbe()
+      let dpiSnapshot = try probe.readDPIOnly(channel: channel, protocolInfo: protocolInfo)
+      guard dpiSnapshot?.current == dpi else {
         throw MXMasterServiceError.verificationFailed(setting: "DPI")
       }
-      return after
+      let fullState = try probe.readState(channel: channel, protocolInfo: protocolInfo)
+      return fullState
     }
   }
 
@@ -121,6 +130,9 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     onEvent: @escaping @Sendable (HIDPPControlEvent) -> Void
   ) async throws {
     try await perform { service in
+      if service.lastCaptureRequests == requests, service.captureSession != nil {
+        return
+      }
       try service.captureSession?.close()
       service.captureSession = nil
       let (channel, protocolInfo) = try service.connection()
@@ -129,7 +141,10 @@ public final class MXMasterDeviceService: @unchecked Sendable {
         channel: channel,
         protocolInfo: protocolInfo
       )
-      guard !requests.isEmpty else { return }
+      guard !requests.isEmpty else {
+        service.lastCaptureRequests = requests
+        return
+      }
 
       service.captureSession = try HIDPPControlCaptureSession(
         channel: channel,
@@ -137,6 +152,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
         requests: requests,
         onEvent: onEvent
       )
+      service.lastCaptureRequests = requests
     }
   }
 
@@ -148,6 +164,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
         channel?.close()
         channel = nil
         protocolInfo = nil
+        lastCaptureRequests = []
         continuation.resume()
       }
     }
@@ -179,6 +196,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
       channel?.close()
       channel = nil
       protocolInfo = nil
+      lastCaptureRequests = []
       disconnectHandler()
     }
   }
@@ -201,6 +219,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
             channel?.close()
             channel = nil
             protocolInfo = nil
+            lastCaptureRequests = []
           }
           continuation.resume(throwing: error)
         }

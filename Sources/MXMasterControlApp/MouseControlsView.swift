@@ -5,12 +5,15 @@ import SwiftUI
 struct MouseControlsView: View {
   @ObservedObject var controller: MouseController
   let compact: Bool
+  @State private var pendingSmartShiftThreshold: Int?
+  @State private var debounceTask: Task<Void, Never>?
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       connectionHeader
 
-      if controller.connectionState == .permissionRequired {
+      switch controller.connectionState {
+      case .permissionRequired:
         VStack(alignment: .leading, spacing: 8) {
           Text(
             "Allow MX Master Control in System Settings → Privacy & Security → Input Monitoring, then return and refresh."
@@ -25,6 +28,39 @@ struct MouseControlsView: View {
             controller.openInputMonitoringSettings()
           }
         }
+
+      case .blocked(let appName):
+        VStack(alignment: .leading, spacing: 8) {
+          Text("\(appName) is using the mouse HID++ interface. Quit it to connect.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+          Button("Refresh") {
+            controller.refresh()
+          }
+          .buttonStyle(.borderedProminent)
+        }
+
+      case .error(let message):
+        VStack(alignment: .leading, spacing: 8) {
+          Text(message)
+            .font(.caption)
+            .foregroundStyle(.red)
+          Button("Retry") {
+            controller.refresh()
+          }
+          .buttonStyle(.borderedProminent)
+        }
+
+      case .reconnecting:
+        HStack(spacing: 8) {
+          ProgressView().controlSize(.small)
+          Text("Reconnecting automatically…")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+
+      default:
+        EmptyView()
       }
 
       if let snapshot = controller.snapshot {
@@ -44,7 +80,9 @@ struct MouseControlsView: View {
           .disabled(controller.isBusy)
 
           Spacer()
-          SettingsLink {
+          Button {
+            AppDelegate.shared?.showSettings()
+          } label: {
             Label("Settings…", systemImage: "gearshape")
           }
           Button("Quit") { NSApp.terminate(nil) }
@@ -53,31 +91,55 @@ struct MouseControlsView: View {
         .controlSize(.small)
       }
     }
-    .padding(20)
+    .padding(compact ? 20 : 0)
     .frame(width: compact ? 340 : nil)
     .task { controller.start() }
   }
 
   private var connectionHeader: some View {
     HStack(spacing: 12) {
-      Image(systemName: controller.snapshot == nil ? "computermouse" : "computermouse.fill")
+      Image(systemName: connectionIconName)
         .font(.title2)
-        .foregroundStyle(controller.snapshot == nil ? .secondary : .primary)
+        .foregroundStyle(connectionColor)
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 2) {
         Text("MX Master 3").font(.headline)
         Text(controller.connectionState.title)
           .font(.caption)
-          .foregroundStyle(.secondary)
+          .foregroundStyle(connectionColor)
           .lineLimit(2)
       }
       Spacer()
-      if controller.isBusy { ProgressView().controlSize(.small) }
+      if controller.isBusy {
+        ProgressView().controlSize(.small)
+      } else if controller.connectionState.isDisconnected {
+        ProgressView().controlSize(.small)
+      }
       if let battery = controller.snapshot?.battery {
-        Label("\(battery.percentage)%", systemImage: batterySymbol(battery.percentage))
+        Label("\(battery.percentage)%", systemImage: batterySymbol(battery.percentage, charging: battery.statusCode == 2))
           .font(.caption)
           .accessibilityLabel("Battery \(battery.percentage) percent")
       }
+    }
+  }
+
+  private var connectionIconName: String {
+    switch controller.connectionState {
+    case .connected: "computermouse.fill"
+    case .connecting, .reconnecting: "computermouse"
+    case .disconnected: "computermouse"
+    case .permissionRequired: "lock.shield"
+    case .blocked, .error: "exclamationmark.triangle.fill"
+    }
+  }
+
+  private var connectionColor: Color {
+    switch controller.connectionState {
+    case .connected: .green
+    case .connecting, .reconnecting: .orange
+    case .disconnected: .secondary
+    case .permissionRequired: .orange
+    case .blocked, .error: .red
     }
   }
 
@@ -91,11 +153,13 @@ struct MouseControlsView: View {
           }
         }
         .labelsHidden()
-        .frame(width: 130)
+        .frame(maxWidth: 150, alignment: .trailing)
+        .fixedSize()
       }
     }
 
     if let smartShift = snapshot.smartShift {
+      let displayThreshold = pendingSmartShiftThreshold ?? Int(smartShift.autoDisengage)
       LabeledContent("Wheel mode") {
         Picker("Wheel mode", selection: smartShiftModeBinding(smartShift)) {
           ForEach(SmartShiftMode.allCases, id: \.rawValue) { mode in
@@ -103,12 +167,29 @@ struct MouseControlsView: View {
           }
         }
         .labelsHidden()
-        .frame(width: 130)
+        .frame(maxWidth: 150, alignment: .trailing)
+        .fixedSize()
       }
 
       Stepper(
-        "SmartShift threshold: \(smartShift.autoDisengage)",
-        value: smartShiftThresholdBinding(smartShift),
+        "SmartShift threshold: \(displayThreshold)",
+        value: Binding(
+          get: { displayThreshold },
+          set: { newValue in
+            pendingSmartShiftThreshold = newValue
+            debounceTask?.cancel()
+            debounceTask = Task { @MainActor in
+              try? await Task.sleep(for: .milliseconds(300))
+              guard !Task.isCancelled else { return }
+              let mode =
+                SmartShiftMode(
+                  rawValue: controller.snapshot?.smartShift?.wheelModeCode ?? smartShift.wheelModeCode
+                ) ?? .freeSpin
+              controller.setSmartShift(mode: mode, threshold: UInt8(newValue))
+              pendingSmartShiftThreshold = nil
+            }
+          }
+        ),
         in: 1...254
       )
     }
@@ -161,13 +242,15 @@ struct MouseControlsView: View {
     )
   }
 
-  private func batterySymbol(_ percentage: UInt8) -> String {
+  private func batterySymbol(_ percentage: UInt8, charging: Bool = false) -> String {
+    let base: String
     switch percentage {
-    case 76...: "battery.100percent"
-    case 51...: "battery.75percent"
-    case 26...: "battery.50percent"
-    case 11...: "battery.25percent"
-    default: "battery.0percent"
+    case 76...: base = "battery.100percent"
+    case 51...: base = "battery.75percent"
+    case 26...: base = "battery.50percent"
+    case 11...: base = "battery.25percent"
+    default: base = "battery.0percent"
     }
+    return charging ? base + ".bolt" : base
   }
 }
