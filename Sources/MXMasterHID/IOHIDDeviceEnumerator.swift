@@ -55,9 +55,14 @@ public struct IOHIDDeviceEnumerator {
 
     guard let deviceSet = IOHIDManagerCopyDevices(manager) else { return [] }
     return (deviceSet as NSSet)
-      .map { $0 as! IOHIDDevice }
+      .compactMap(Self.iohidDevice)
       .compactMap(Self.describe)
       .sorted(by: Self.sortDescriptors)
+  }
+
+  private static func iohidDevice(_ element: Any) -> IOHIDDevice? {
+    guard CFGetTypeID(element as AnyObject) == IOHIDDeviceGetTypeID() else { return nil }
+    return unsafeDowncast(element as AnyObject, to: IOHIDDevice.self)
   }
 
   private static func describe(_ device: IOHIDDevice) -> HIDDeviceDescriptor? {

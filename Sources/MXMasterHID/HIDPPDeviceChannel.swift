@@ -90,7 +90,7 @@ public final class HIDPPDeviceChannel: @unchecked Sendable {
     guard
       let devices = IOHIDManagerCopyDevices(manager),
       let selected = (devices as NSSet)
-        .map({ $0 as! IOHIDDevice })
+        .compactMap(Self.iohidDevice)
         .first(where: Self.hasLongHIDPPUsage)
     else {
       IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -269,6 +269,11 @@ public final class HIDPPDeviceChannel: @unchecked Sendable {
     responseCondition.lock()
     if pendingResponse === pending { pendingResponse = nil }
     responseCondition.unlock()
+  }
+
+  private static func iohidDevice(_ element: Any) -> IOHIDDevice? {
+    guard CFGetTypeID(element as AnyObject) == IOHIDDeviceGetTypeID() else { return nil }
+    return unsafeDowncast(element as AnyObject, to: IOHIDDevice.self)
   }
 
   private static func hasLongHIDPPUsage(_ device: IOHIDDevice) -> Bool {
