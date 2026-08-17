@@ -61,6 +61,10 @@ final class MouseController: ObservableObject {
   private var applicationObservers: [NSObjectProtocol] = []
   private var reconnectTask: Task<Void, Never>?
   private var pendingSettingTask: Task<Void, Never>?
+  private var settingQueue = LatestOperationQueue<
+    @MainActor () async throws -> MXMasterReadOnlySnapshot
+  >()
+  private var settingGeneration = 0
   private var isSleeping = false
 
   init() {
@@ -190,22 +194,55 @@ final class MouseController: ObservableObject {
   private func performSettingChange(
     _ operation: @escaping @MainActor () async throws -> MXMasterReadOnlySnapshot
   ) {
+    guard settingQueue.submit(operation) else { return }
     guard !isBusy else { return }
+    startSettingLoop()
+  }
+
+  private func startSettingLoop() {
+    guard let first = settingQueue.current else { return }
+    settingGeneration += 1
+    let generation = settingGeneration
     pendingSettingTask = Task {
       isBusy = true
-      defer { isBusy = false }
-      do {
-        snapshot = try await operation()
-        try configurationStore.save(configuration)
-        connectionState = .connected
-      } catch {
-        let classifiedState = classify(error)
-        connectionState = classifiedState
-        if classifiedState.isDisconnected {
-          handleDeviceDisconnected()
+      defer {
+        if settingGeneration == generation {
+          isBusy = false
+          pendingSettingTask = nil
         }
       }
-      pendingSettingTask = nil
+      var nextOperation = first
+      while true {
+        let state: MXMasterReadOnlySnapshot
+        do {
+          state = try await nextOperation()
+        } catch {
+          failSettingChange(error, generation: generation)
+          return
+        }
+        guard !Task.isCancelled, settingGeneration == generation else { return }
+        snapshot = state
+        do {
+          try configurationStore.save(configuration)
+          connectionState = .connected
+        } catch {
+          failSettingChange(error, generation: generation)
+          return
+        }
+        guard !Task.isCancelled, settingGeneration == generation else { return }
+        guard let queued = settingQueue.finishCurrent() else { return }
+        nextOperation = queued
+      }
+    }
+  }
+
+  private func failSettingChange(_ error: Error, generation: Int) {
+    guard settingGeneration == generation else { return }
+    settingQueue.abandon()
+    let classifiedState = classify(error)
+    connectionState = classifiedState
+    if classifiedState.isDisconnected {
+      handleDeviceDisconnected()
     }
   }
 
@@ -250,7 +287,9 @@ final class MouseController: ObservableObject {
       reconnectTask?.cancel()
       reconnectTask = nil
       await applyActionConfiguration()
+      if settingQueue.isRunning { startSettingLoop() }
     } catch {
+      settingQueue.abandon()
       snapshot = nil
       let classifiedState = classify(error)
       connectionState = classifiedState
@@ -270,6 +309,7 @@ final class MouseController: ObservableObject {
             reconnectTask = nil
             pendingSettingTask?.cancel()
             pendingSettingTask = nil
+            settingQueue.abandon()
             isBusy = false
             snapshot = nil
             controlCaptureActive = false
@@ -327,6 +367,7 @@ final class MouseController: ObservableObject {
     actionCoordinator.cancelPendingGesture()
     pendingSettingTask?.cancel()
     pendingSettingTask = nil
+    settingQueue.abandon()
     snapshot = nil
     isBusy = false
     connectionState = .reconnecting
