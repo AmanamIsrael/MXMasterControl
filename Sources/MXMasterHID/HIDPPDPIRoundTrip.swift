@@ -29,7 +29,7 @@ public struct HIDPPDPIRoundTrip {
     let channel = try HIDPPDeviceChannel()
     defer { channel.close() }
     let protocolInfo = try HIDPPReadOnlyProbe().probeFeatures(channel: channel)
-    guard let dpiIndex = protocolInfo.features.first(where: { $0.featureID == 0x2201 })?.tableIndex
+    guard let dpiIndex = protocolInfo.index(of: HIDPPFeatureID.adjustableDPI)
     else { throw DPIRoundTripError.featureUnavailable }
 
     let original = try readCurrent(index: dpiIndex, channel: channel)
@@ -79,21 +79,21 @@ public struct HIDPPDPIRoundTrip {
     }
   }
 
-  private func readCurrent(index: UInt8, channel: HIDPPDeviceChannel) throws -> UInt16 {
+  private func readCurrent(index: UInt8, channel: any HIDPPChannel) throws -> UInt16 {
     let response = try channel.send(
       HIDPPMessage(featureIndex: index, functionID: 2, payload: [0, 0, 0])
     )
     return UInt16(response.payload[1]) << 8 | UInt16(response.payload[2])
   }
 
-  private func readSupported(index: UInt8, channel: HIDPPDeviceChannel) throws -> [UInt16] {
+  private func readSupported(index: UInt8, channel: any HIDPPChannel) throws -> [UInt16] {
     let response = try channel.send(
       HIDPPMessage(featureIndex: index, functionID: 1, payload: [0, 0, 0])
     )
     return try DPIListParser.parse(response.payload[1...])
   }
 
-  private func set(_ dpi: UInt16, index: UInt8, channel: HIDPPDeviceChannel) throws {
+  private func set(_ dpi: UInt16, index: UInt8, channel: any HIDPPChannel) throws {
     let high = UInt8(dpi >> 8)
     let low = UInt8(dpi & 0xFF)
     _ = try channel.send(

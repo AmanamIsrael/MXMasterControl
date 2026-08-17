@@ -36,9 +36,10 @@ public final class HIDPPControlCaptureSession: @unchecked Sendable {
     case closed
   }
 
-  private let channel: HIDPPDeviceChannel
+  private let channel: any HIDPPChannel
   private let featureIndex: UInt8
   private let closesChannelOnClose: Bool
+  private let controlTable = HIDPPControlTableReader()
   private let lifecycleCondition = NSCondition()
   private var lifecycle = Lifecycle.open
   private var originalStates: [UInt16: ControlReportingState] = [:]
@@ -66,15 +67,14 @@ public final class HIDPPControlCaptureSession: @unchecked Sendable {
   }
 
   public init(
-    channel: HIDPPDeviceChannel,
+    channel: any HIDPPChannel,
     protocolInfo: HIDPPProbeResult,
     requests: [ControlCaptureRequest],
     closesChannelOnClose: Bool = false,
     onEvent: @escaping @Sendable (HIDPPControlEvent) -> Void
   ) throws {
     guard
-      let featureIndex = protocolInfo.features.first(where: { $0.featureID == 0x1B04 })?
-        .tableIndex
+      let featureIndex = protocolInfo.index(of: HIDPPFeatureID.reprogrammableControls)
     else { throw ControlCaptureError.featureUnavailable }
 
     self.channel = channel
@@ -82,7 +82,7 @@ public final class HIDPPControlCaptureSession: @unchecked Sendable {
     self.closesChannelOnClose = closesChannelOnClose
 
     do {
-      let controls = try Self.readControls(featureIndex: featureIndex, channel: channel)
+      let controls = try controlTable.readControls(featureIndex: featureIndex, channel: channel)
       let controlsByID = Dictionary(uniqueKeysWithValues: controls.map { ($0.controlID, $0) })
 
       for request in requests {
@@ -95,7 +95,7 @@ public final class HIDPPControlCaptureSession: @unchecked Sendable {
       }
 
       for request in requests {
-        let originalState = try Self.readReporting(
+        let originalState = try controlTable.readReporting(
           controlID: request.controlID,
           featureIndex: featureIndex,
           channel: channel
@@ -109,7 +109,7 @@ public final class HIDPPControlCaptureSession: @unchecked Sendable {
             functionID: 3,
             payload: originalState.temporaryDiversionPayload(rawMovement: request.rawMovement)
           ))
-        let armed = try Self.readReporting(
+        let armed = try controlTable.readReporting(
           controlID: request.controlID,
           featureIndex: featureIndex,
           channel: channel
@@ -192,7 +192,7 @@ public final class HIDPPControlCaptureSession: @unchecked Sendable {
             functionID: 3,
             payload: originalState.restorationPayload
           ))
-        let restored = try Self.readReporting(
+        let restored = try controlTable.readReporting(
           controlID: controlID,
           featureIndex: featureIndex,
           channel: channel
@@ -205,40 +205,5 @@ public final class HIDPPControlCaptureSession: @unchecked Sendable {
       }
     }
     if let firstError { throw firstError }
-  }
-
-  private static func readControls(
-    featureIndex: UInt8,
-    channel: HIDPPDeviceChannel
-  ) throws -> [ControlSnapshot] {
-    let count = try channel.send(HIDPPMessage(featureIndex: featureIndex, functionID: 0)).payload[0]
-    guard count > 0 else { return [] }
-    return try (UInt8(0)..<count).map { row in
-      let response = try channel.send(
-        HIDPPMessage(featureIndex: featureIndex, functionID: 1, payload: [row])
-      )
-      return ControlSnapshot(
-        controlID: UInt16(response.payload[0]) << 8 | UInt16(response.payload[1]),
-        defaultTaskID: UInt16(response.payload[2]) << 8 | UInt16(response.payload[3]),
-        flags: UInt16(response.payload[4]) | UInt16(response.payload[8]) << 8,
-        position: response.payload[5],
-        group: response.payload[6],
-        groupMask: response.payload[7]
-      )
-    }
-  }
-
-  private static func readReporting(
-    controlID: UInt16,
-    featureIndex: UInt8,
-    channel: HIDPPDeviceChannel
-  ) throws -> ControlReportingState {
-    let response = try channel.send(
-      HIDPPMessage(
-        featureIndex: featureIndex,
-        functionID: 2,
-        payload: [UInt8(controlID >> 8), UInt8(controlID & 0xFF), 0]
-      ))
-    return ControlReportingState(payload: response.payload)
   }
 }

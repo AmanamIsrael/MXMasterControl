@@ -24,11 +24,11 @@ public struct HIDPPSettingsRoundTrip {
     let channel = try HIDPPDeviceChannel()
     defer { channel.close() }
     let protocolInfo = try HIDPPReadOnlyProbe().probeFeatures(channel: channel)
-    guard let smartShiftIndex = index(of: 0x2110, in: protocolInfo) else {
-      throw SettingsRoundTripError.featureUnavailable(0x2110)
+    guard let smartShiftIndex = protocolInfo.index(of: HIDPPFeatureID.smartShift) else {
+      throw SettingsRoundTripError.featureUnavailable(HIDPPFeatureID.smartShift)
     }
-    guard let wheelIndex = index(of: 0x2121, in: protocolInfo) else {
-      throw SettingsRoundTripError.featureUnavailable(0x2121)
+    guard let wheelIndex = protocolInfo.index(of: HIDPPFeatureID.wheel) else {
+      throw SettingsRoundTripError.featureUnavailable(HIDPPFeatureID.wheel)
     }
 
     return SettingsRoundTripResult(
@@ -39,7 +39,7 @@ public struct HIDPPSettingsRoundTrip {
 
   private func testSmartShift(
     index: UInt8,
-    channel: HIDPPDeviceChannel
+    channel: any HIDPPChannel
   ) throws -> SmartShiftRoundTripResult {
     let original = try channel.send(HIDPPMessage(featureIndex: index, functionID: 0))
     let originalMode = original.payload[0]
@@ -98,7 +98,7 @@ public struct HIDPPSettingsRoundTrip {
     mode: UInt8,
     threshold: UInt8,
     defaultThreshold: UInt8,
-    channel: HIDPPDeviceChannel
+    channel: any HIDPPChannel
   ) throws -> HIDPPMessage {
     _ = try channel.send(
       HIDPPMessage(
@@ -115,7 +115,7 @@ public struct HIDPPSettingsRoundTrip {
 
   private func testWheel(
     index: UInt8,
-    channel: HIDPPDeviceChannel
+    channel: any HIDPPChannel
   ) throws -> WheelRoundTripResult {
     let original = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
     let originalModeByte = original.payload[0]
@@ -160,7 +160,7 @@ public struct HIDPPSettingsRoundTrip {
   private func restoreWheel(
     index: UInt8,
     modeByte: UInt8,
-    channel: HIDPPDeviceChannel
+    channel: any HIDPPChannel
   ) throws -> Bool {
     _ = try channel.send(
       HIDPPMessage(featureIndex: index, functionID: 2, payload: [modeByte, 0, 0])
@@ -170,9 +170,5 @@ public struct HIDPPSettingsRoundTrip {
       throw SettingsRoundTripError.verificationFailed(setting: "wheel restoration")
     }
     return restored.payload[0] & (1 << 2) != 0
-  }
-
-  private func index(of featureID: UInt16, in info: HIDPPProbeResult) -> UInt8? {
-    info.features.first(where: { $0.featureID == featureID })?.tableIndex
   }
 }

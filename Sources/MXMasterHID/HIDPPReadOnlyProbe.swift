@@ -18,7 +18,7 @@ public struct HIDPPReadOnlyProbe {
   }
 
   func readState(
-    channel: HIDPPDeviceChannel,
+    channel: any HIDPPChannel,
     protocolInfo: HIDPPProbeResult
   ) throws -> MXMasterReadOnlySnapshot {
     let indexByFeature = Dictionary(
@@ -28,50 +28,50 @@ public struct HIDPPReadOnlyProbe {
 
     return MXMasterReadOnlySnapshot(
       protocolInfo: protocolInfo,
-      battery: try indexByFeature[0x1000].map { try readBattery(index: $0, channel: channel) },
-      dpi: try indexByFeature[0x2201].map { try readDPI(index: $0, channel: channel) },
-      smartShift: try indexByFeature[0x2110].map {
+      battery: try indexByFeature[HIDPPFeatureID.battery].map { try readBattery(index: $0, channel: channel) },
+      dpi: try indexByFeature[HIDPPFeatureID.adjustableDPI].map { try readDPI(index: $0, channel: channel) },
+      smartShift: try indexByFeature[HIDPPFeatureID.smartShift].map {
         try readSmartShift(index: $0, channel: channel)
       },
-      wheel: try indexByFeature[0x2121].map { try readWheel(index: $0, channel: channel) },
-      thumbWheel: try indexByFeature[0x2150].map {
+      wheel: try indexByFeature[HIDPPFeatureID.wheel].map { try readWheel(index: $0, channel: channel) },
+      thumbWheel: try indexByFeature[HIDPPFeatureID.thumbWheel].map {
         try readThumbWheel(index: $0, channel: channel)
       },
-      controls: try indexByFeature[0x1B04].map {
+      controls: try indexByFeature[HIDPPFeatureID.reprogrammableControls].map {
         try readControls(index: $0, channel: channel)
       } ?? []
     )
   }
 
   func readDPIOnly(
-    channel: HIDPPDeviceChannel,
+    channel: any HIDPPChannel,
     protocolInfo: HIDPPProbeResult
   ) throws -> DPISnapshot? {
-    guard let index = protocolInfo.features.first(where: { $0.featureID == 0x2201 })?.tableIndex
+    guard let index = protocolInfo.features.first(where: { $0.featureID == HIDPPFeatureID.adjustableDPI })?.tableIndex
     else { return nil }
     return try readDPI(index: index, channel: channel)
   }
 
   func readSmartShiftOnly(
-    channel: HIDPPDeviceChannel,
+    channel: any HIDPPChannel,
     protocolInfo: HIDPPProbeResult
   ) throws -> SmartShiftSnapshot? {
-    guard let index = protocolInfo.features.first(where: { $0.featureID == 0x2110 })?.tableIndex
+    guard let index = protocolInfo.features.first(where: { $0.featureID == HIDPPFeatureID.smartShift })?.tableIndex
     else { return nil }
     return try readSmartShift(index: index, channel: channel)
   }
 
   func readWheelOnly(
-    channel: HIDPPDeviceChannel,
+    channel: any HIDPPChannel,
     protocolInfo: HIDPPProbeResult
   ) throws -> WheelSnapshot? {
-    guard let index = protocolInfo.features.first(where: { $0.featureID == 0x2121 })?.tableIndex
+    guard let index = protocolInfo.features.first(where: { $0.featureID == HIDPPFeatureID.wheel })?.tableIndex
     else { return nil }
     return try readWheel(index: index, channel: channel)
   }
 
   func readBatteryOnly(
-    channel: HIDPPDeviceChannel,
+    channel: any HIDPPChannel,
     protocolInfo: HIDPPProbeResult
   ) throws -> BatterySnapshot? {
     guard let index = protocolInfo.features.first(where: { $0.featureID == 0x1000 })?.tableIndex
@@ -79,7 +79,7 @@ public struct HIDPPReadOnlyProbe {
     return try readBattery(index: index, channel: channel)
   }
 
-  public func probeFeatures(channel: HIDPPDeviceChannel) throws -> HIDPPProbeResult {
+  public func probeFeatures(channel: any HIDPPChannel) throws -> HIDPPProbeResult {
 
     let ping = try channel.send(
       HIDPPMessage(featureIndex: 0, functionID: 1, payload: [0, 0, 0])
@@ -123,7 +123,7 @@ public struct HIDPPReadOnlyProbe {
     )
   }
 
-  private func readBattery(index: UInt8, channel: HIDPPDeviceChannel) throws -> BatterySnapshot {
+  private func readBattery(index: UInt8, channel: any HIDPPChannel) throws -> BatterySnapshot {
     let response = try channel.send(HIDPPMessage(featureIndex: index, functionID: 0))
     return BatterySnapshot(
       percentage: response.payload[0],
@@ -132,7 +132,7 @@ public struct HIDPPReadOnlyProbe {
     )
   }
 
-  private func readDPI(index: UInt8, channel: HIDPPDeviceChannel) throws -> DPISnapshot {
+  private func readDPI(index: UInt8, channel: any HIDPPChannel) throws -> DPISnapshot {
     let count = try channel.send(HIDPPMessage(featureIndex: index, functionID: 0)).payload[0]
     let supportedResponse = try channel.send(
       HIDPPMessage(featureIndex: index, functionID: 1, payload: [0, 0, 0])
@@ -149,7 +149,7 @@ public struct HIDPPReadOnlyProbe {
 
   private func readSmartShift(
     index: UInt8,
-    channel: HIDPPDeviceChannel
+    channel: any HIDPPChannel
   ) throws -> SmartShiftSnapshot {
     let response = try channel.send(HIDPPMessage(featureIndex: index, functionID: 0))
     return SmartShiftSnapshot(
@@ -159,7 +159,7 @@ public struct HIDPPReadOnlyProbe {
     )
   }
 
-  private func readWheel(index: UInt8, channel: HIDPPDeviceChannel) throws -> WheelSnapshot {
+  private func readWheel(index: UInt8, channel: any HIDPPChannel) throws -> WheelSnapshot {
     let capabilities = try channel.send(HIDPPMessage(featureIndex: index, functionID: 0))
     let mode = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
     let ratchet = try channel.send(HIDPPMessage(featureIndex: index, functionID: 3))
@@ -178,7 +178,7 @@ public struct HIDPPReadOnlyProbe {
 
   private func readThumbWheel(
     index: UInt8,
-    channel: HIDPPDeviceChannel
+    channel: any HIDPPChannel
   ) throws -> ThumbWheelSnapshot {
     let info = try channel.send(HIDPPMessage(featureIndex: index, functionID: 0))
     let status = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
@@ -197,29 +197,15 @@ public struct HIDPPReadOnlyProbe {
 
   private func readControls(
     index: UInt8,
-    channel: HIDPPDeviceChannel
+    channel: any HIDPPChannel
   ) throws -> [ControlSnapshot] {
-    let count = try channel.send(HIDPPMessage(featureIndex: index, functionID: 0)).payload[0]
-    guard count > 0 else { return [] }
-    return try (UInt8(0)..<count).map { row in
-      let response = try channel.send(
-        HIDPPMessage(featureIndex: index, functionID: 1, payload: [row])
-      )
-      return ControlSnapshot(
-        controlID: UInt16(response.payload[0]) << 8 | UInt16(response.payload[1]),
-        defaultTaskID: UInt16(response.payload[2]) << 8 | UInt16(response.payload[3]),
-        flags: UInt16(response.payload[4]) | UInt16(response.payload[8]) << 8,
-        position: response.payload[5],
-        group: response.payload[6],
-        groupMask: response.payload[7]
-      )
-    }
+    try HIDPPControlTableReader().readControls(featureIndex: index, channel: channel)
   }
 
   private func readFeature(
     _ tableIndex: UInt8,
     featureSetIndex: UInt8,
-    channel: HIDPPDeviceChannel
+    channel: any HIDPPChannel
   ) throws -> HIDPPMessage {
     var lastError: Error?
     for attempt in 1...3 {

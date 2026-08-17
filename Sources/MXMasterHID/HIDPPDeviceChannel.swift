@@ -38,7 +38,7 @@ public enum HIDPPChannelError: LocalizedError, Equatable {
 /// Owns the direct-Bluetooth IOHID channel and serializes HID++ requests. This first version is
 /// intentionally synchronous for the diagnostic CLI; the app-facing session will isolate it on
 /// its own actor rather than allowing calls on the main actor.
-public final class HIDPPDeviceChannel: @unchecked Sendable {
+public final class HIDPPDeviceChannel: HIDPPChannel, @unchecked Sendable {
   private final class PendingResponse {
     let request: HIDPPMessage
     var bytes: [UInt8]?

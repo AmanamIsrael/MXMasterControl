@@ -155,6 +155,16 @@ public struct ControlSnapshot: Codable, Equatable, Sendable {
     self.group = group
     self.groupMask = groupMask
   }
+
+  public init(payload: [UInt8]) {
+    precondition(payload.count >= 9)
+    controlID = UInt16(payload[0]) << 8 | UInt16(payload[1])
+    defaultTaskID = UInt16(payload[2]) << 8 | UInt16(payload[3])
+    flags = UInt16(payload[4]) | UInt16(payload[8]) << 8
+    position = payload[5]
+    group = payload[6]
+    groupMask = payload[7]
+  }
 }
 
 public enum DPIListParser {
