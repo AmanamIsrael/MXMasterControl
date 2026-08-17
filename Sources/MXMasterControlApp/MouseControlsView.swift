@@ -222,19 +222,6 @@ struct MouseControlsView: View {
     )
   }
 
-  private func smartShiftThresholdBinding(_ smartShift: SmartShiftSnapshot) -> Binding<Int> {
-    Binding(
-      get: { Int(controller.snapshot?.smartShift?.autoDisengage ?? smartShift.autoDisengage) },
-      set: { value in
-        let mode =
-          SmartShiftMode(
-            rawValue: controller.snapshot?.smartShift?.wheelModeCode ?? smartShift.wheelModeCode
-          ) ?? .freeSpin
-        controller.setSmartShift(mode: mode, threshold: UInt8(value))
-      }
-    )
-  }
-
   private func wheelInversionBinding(_ wheel: WheelSnapshot) -> Binding<Bool> {
     Binding(
       get: { controller.snapshot?.wheel?.inverted ?? wheel.inverted },
