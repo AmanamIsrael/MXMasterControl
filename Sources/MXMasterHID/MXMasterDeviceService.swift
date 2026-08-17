@@ -30,9 +30,17 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   private var lastCaptureRequests: [ControlCaptureRequest] = []
   private var cachedProbeResult: HIDPPProbeResult?
   private let disconnectHandler: @Sendable () -> Void
+  private let channelFactory: @Sendable (@escaping @Sendable () -> Void) throws -> any HIDPPChannel
 
-  public init(onDisconnect: @escaping @Sendable () -> Void = {}) {
+  public init(
+    onDisconnect: @escaping @Sendable () -> Void = {},
+    channelFactory: @escaping @Sendable (@escaping @Sendable () -> Void) throws
+      -> any HIDPPChannel = { onDisconnect in
+        try HIDPPDeviceChannel(onDisconnect: onDisconnect)
+      }
+  ) {
     disconnectHandler = onDisconnect
+    self.channelFactory = channelFactory
   }
 
   deinit {
@@ -289,7 +297,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   private func establishConnection() throws -> (any HIDPPChannel, HIDPPProbeResult) {
     connectionGeneration &+= 1
     let generation = connectionGeneration
-    let newChannel = try HIDPPDeviceChannel { [weak self] in
+    let newChannel = try channelFactory { [weak self] in
       self?.deviceDidDisconnect(generation: generation)
     }
     do {
