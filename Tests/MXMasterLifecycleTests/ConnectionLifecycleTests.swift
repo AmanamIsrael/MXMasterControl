@@ -8,18 +8,29 @@ import MXMasterLifecycle
     .deviceNotFound,
     .managerOpenFailed(code: 1),
     .deviceOpenFailed(code: 2),
-    .requestAlreadyPending,
     .reportWriteFailed(code: 3),
     .responseDeliveryFailed(code: 4),
     .responseTimedOut,
-    .malformedResponse,
-    .deviceError(code: 0x07),
     .channelClosed,
   ]
   for error in transportErrors {
     #expect(
       ConnectionClassifier.kind(of: error) == .transient,
       "expected \(error) to be transient"
+    )
+  }
+}
+
+@Test func classifyTreatsUnretryableProtocolErrorsAsFatal() {
+  let protocolErrors: [HIDPPChannelError] = [
+    .requestAlreadyPending,
+    .malformedResponse,
+    .deviceError(code: 0x07),
+  ]
+  for error in protocolErrors {
+    #expect(
+      ConnectionClassifier.kind(of: error) == .fatal,
+      "expected \(error) to be fatal"
     )
   }
 }

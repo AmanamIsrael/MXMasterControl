@@ -14,11 +14,18 @@ public final class HIDPPDeviceMonitor: @unchecked Sendable {
     category: "hid"
   )
 
+  /// Signals when the manager's cancel handler has drained all queued events,
+  /// making it safe to drop the manager (and its unretained callback context).
+  private final class CancellationSignal: @unchecked Sendable {
+    let semaphore = DispatchSemaphore(value: 0)
+  }
+
   private let identifier: USBIdentifier
   private let callbackQueue = DispatchQueue(
     label: "com.amanamisrael.MXMasterControl.device-monitor")
   private let stateLock = NSLock()
   private var manager: IOHIDManager?
+  private var cancellation: CancellationSignal?
   private var onArrival: (@Sendable () -> Void)?
 
   public init(identifier: USBIdentifier = HIDDeviceDescriptor.targetIdentifier) {
@@ -31,7 +38,8 @@ public final class HIDPPDeviceMonitor: @unchecked Sendable {
 
   /// Starts observing. The handler may be invoked several times per physical
   /// arrival (the mouse exposes multiple matching HID interfaces); consumers
-  /// should debounce. Safe to call again to replace the handler.
+  /// should debounce. Safe to call again to replace the handler, and to call
+  /// again after a failed start (e.g. once Input Monitoring is granted).
   public func start(onArrival: @escaping @Sendable () -> Void) {
     stateLock.lock()
     if manager != nil {
@@ -50,8 +58,22 @@ public final class HIDPPDeviceMonitor: @unchecked Sendable {
       kIOHIDProductIDKey as String: identifier.productID,
     ]
     IOHIDManagerSetDeviceMatching(newManager, matching as CFDictionary)
-    IOHIDManagerSetDispatchQueue(newManager, callbackQueue)
 
+    let openResult = IOHIDManagerOpen(newManager, IOOptionBits(kIOHIDOptionsTypeNone))
+    guard openResult == kIOReturnSuccess else {
+      Self.logger.error(
+        "Device monitor failed to open IOHIDManager (IOReturn \(openResult)); arrival events unavailable"
+      )
+      stateLock.lock()
+      self.onArrival = nil
+      stateLock.unlock()
+      return
+    }
+
+    // A queue-scheduled manager stays inert until activated, and registration
+    // must happen before activation (see IOHIDManager.h). The cancel handler is
+    // also installed up front because it cannot be added after activation; stop()
+    // waits on it before releasing the manager that holds an unretained `self`.
     let context = Unmanaged.passUnretained(self).toOpaque()
     IOHIDManagerRegisterDeviceMatchingCallback(
       newManager,
@@ -62,20 +84,15 @@ public final class HIDPPDeviceMonitor: @unchecked Sendable {
       },
       context
     )
+    IOHIDManagerSetDispatchQueue(newManager, callbackQueue)
 
-    let result = IOHIDManagerOpen(newManager, IOOptionBits(kIOHIDOptionsTypeNone))
-    guard result == kIOReturnSuccess else {
-      Self.logger.error(
-        "Device monitor failed to open IOHIDManager (IOReturn \(result)); arrival events unavailable"
-      )
-      stateLock.lock()
-      self.onArrival = nil
-      stateLock.unlock()
-      return
-    }
+    let signal = CancellationSignal()
+    IOHIDManagerSetCancelHandler(newManager, { [signal] in signal.semaphore.signal() })
+    IOHIDManagerActivate(newManager)
 
     stateLock.lock()
     manager = newManager
+    cancellation = signal
     stateLock.unlock()
   }
 
@@ -83,10 +100,16 @@ public final class HIDPPDeviceMonitor: @unchecked Sendable {
     stateLock.lock()
     let existing = manager
     manager = nil
+    let signal = cancellation
+    cancellation = nil
     onArrival = nil
     stateLock.unlock()
     guard let existing else { return }
     IOHIDManagerClose(existing, IOOptionBits(kIOHIDOptionsTypeNone))
+    IOHIDManagerCancel(existing)
+    if let signal {
+      _ = signal.semaphore.wait(timeout: .now() + 2)
+    }
   }
 
   private func deviceMatched() {

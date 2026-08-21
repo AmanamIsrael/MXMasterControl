@@ -40,13 +40,22 @@ final class MouseController: ObservableObject {
   private var reconnectTask: Task<Void, Never>?
   private var reconnectGeneration = 0
   private var pendingSettingTask: Task<Void, Never>?
-  private var settingQueue = LatestOperationQueue<
-    @MainActor () async throws -> MXMasterReadOnlySnapshot
-  >()
+  private var settingLoopRunning = false
+  private var pendingSettings: [SettingKind: SettingOperation] = [:]
   private var settingGeneration = 0
   private var isSleeping = false
   private let deviceMonitor = HIDPPDeviceMonitor()
   private var lastArrivalHandling = Date.distantPast
+
+  /// Independent settings coalesce separately: moving the DPI slider must not
+  /// discard a queued wheel toggle (or vice versa).
+  private enum SettingKind: CaseIterable {
+    case dpi
+    case smartShift
+    case wheel
+  }
+
+  private typealias SettingOperation = @MainActor () async throws -> MXMasterReadOnlySnapshot
 
   init() {
     let applicationSupport = FileManager.default.urls(
@@ -65,9 +74,7 @@ final class MouseController: ObservableObject {
     launchAtLogin = SMAppService.mainApp.status == .enabled
     accessibilityGranted = MouseActionDispatcher.accessibilityGranted
     registerLifecycleObservers()
-    deviceMonitor.start { [weak self] in
-      Task { @MainActor [weak self] in self?.deviceDidArrive() }
-    }
+    startDeviceMonitor()
   }
 
   func start() {
@@ -80,7 +87,7 @@ final class MouseController: ObservableObject {
   }
 
   func setDPI(_ dpi: UInt16) {
-    performSettingChange {
+    performSettingChange(kind: .dpi) {
       let supported = self.snapshot?.dpi?.supported
       let state = try await self.service.setDPI(dpi, supportedDPIs: supported)
       self.configuration.dpi = dpi
@@ -89,7 +96,7 @@ final class MouseController: ObservableObject {
   }
 
   func setSmartShift(mode: SmartShiftMode, threshold: UInt8) {
-    performSettingChange {
+    performSettingChange(kind: .smartShift) {
       let state = try await self.service.setSmartShift(mode: mode, threshold: threshold)
       self.configuration.smartShiftMode = mode
       self.configuration.smartShiftThreshold = threshold
@@ -98,7 +105,7 @@ final class MouseController: ObservableObject {
   }
 
   func setWheelInverted(_ inverted: Bool) {
-    performSettingChange {
+    performSettingChange(kind: .wheel) {
       let state = try await self.service.setWheelInverted(inverted)
       self.configuration.wheelInverted = inverted
       return state
@@ -148,10 +155,19 @@ final class MouseController: ObservableObject {
     if access == .granted {
       Task {
         await service.invalidate()
+        // A first-launch start may have failed with kIOReturnNotPermitted and
+        // torn its handler down; retry now that permission is granted.
+        startDeviceMonitor()
         await loadState(reconcile: true)
       }
     } else {
       connectionState = .permissionRequired
+    }
+  }
+
+  private func startDeviceMonitor() {
+    deviceMonitor.start { [weak self] in
+      Task { @MainActor [weak self] in self?.deviceDidArrive() }
     }
   }
 
@@ -177,15 +193,30 @@ final class MouseController: ObservableObject {
   }
 
   private func performSettingChange(
+    kind: SettingKind,
     _ operation: @escaping @MainActor () async throws -> MXMasterReadOnlySnapshot
   ) {
-    guard settingQueue.submit(operation) else { return }
-    guard !isBusy else { return }
+    pendingSettings[kind] = operation
+    guard !settingLoopRunning else { return }
     startSettingLoop()
   }
 
+  /// Removes the next queued operation, FIFO across settings and latest-wins
+  /// within each setting.
+  private func takeNextPendingSetting() -> SettingOperation? {
+    for kind in SettingKind.allCases {
+      if let operation = pendingSettings.removeValue(forKey: kind) { return operation }
+    }
+    return nil
+  }
+
+  private func abandonPendingSettings() {
+    pendingSettings.removeAll()
+  }
+
   private func startSettingLoop() {
-    guard let first = settingQueue.current else { return }
+    guard !settingLoopRunning, let first = takeNextPendingSetting() else { return }
+    settingLoopRunning = true
     settingGeneration += 1
     let generation = settingGeneration
     pendingSettingTask = Task {
@@ -195,6 +226,7 @@ final class MouseController: ObservableObject {
           isBusy = false
           pendingSettingTask = nil
         }
+        settingLoopRunning = false
       }
       var nextOperation = first
       while true {
@@ -215,7 +247,7 @@ final class MouseController: ObservableObject {
           return
         }
         guard !Task.isCancelled, settingGeneration == generation else { return }
-        guard let queued = settingQueue.finishCurrent() else { return }
+        guard let queued = takeNextPendingSetting() else { return }
         nextOperation = queued
       }
     }
@@ -223,7 +255,7 @@ final class MouseController: ObservableObject {
 
   private func failSettingChange(_ error: Error, generation: Int) {
     guard settingGeneration == generation else { return }
-    settingQueue.abandon()
+    abandonPendingSettings()
     let classifiedState = classify(error)
     connectionState = classifiedState
     if classifiedState.isDisconnected {
@@ -272,9 +304,9 @@ final class MouseController: ObservableObject {
       reconnectTask?.cancel()
       reconnectTask = nil
       await applyActionConfiguration()
-      if settingQueue.isRunning { startSettingLoop() }
+      if !pendingSettings.isEmpty { startSettingLoop() }
     } catch {
-      settingQueue.abandon()
+      abandonPendingSettings()
       snapshot = nil
       let classifiedState = classify(error)
       connectionState = classifiedState
@@ -294,7 +326,7 @@ final class MouseController: ObservableObject {
             reconnectTask = nil
             pendingSettingTask?.cancel()
             pendingSettingTask = nil
-            settingQueue.abandon()
+            abandonPendingSettings()
             isBusy = false
             snapshot = nil
             controlCaptureActive = false
@@ -353,7 +385,7 @@ final class MouseController: ObservableObject {
     actionCoordinator.cancelPendingGesture()
     pendingSettingTask?.cancel()
     pendingSettingTask = nil
-    settingQueue.abandon()
+    abandonPendingSettings()
     snapshot = nil
     isBusy = false
     connectionState = .reconnecting

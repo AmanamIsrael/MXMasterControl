@@ -13,10 +13,23 @@ public enum ConnectionFailureKind: Equatable {
 }
 
 /// Maps connection failures to the reconciliation policy that handles them.
+/// The mapping is exhaustive over `HIDPPChannelError` so a new error case is a
+/// compile-time decision, not a silent fallthrough into "retry forever".
 public enum ConnectionClassifier {
   public static func kind(of error: Error) -> ConnectionFailureKind {
     guard let channelError = error as? HIDPPChannelError else { return .fatal }
-    if channelError == .inputMonitoringDenied { return .permissionRequired }
-    return .transient
+    switch channelError {
+    case .inputMonitoringDenied:
+      return .permissionRequired
+    case .deviceNotFound, .managerOpenFailed, .deviceOpenFailed, .reportWriteFailed,
+      .responseDeliveryFailed, .responseTimedOut, .channelClosed:
+      return .transient
+    case .requestAlreadyPending, .malformedResponse, .deviceError:
+      // A pending-request collision means our own serialization broke; a
+      // malformed response or HID++ NAK is firmware rejecting the exchange.
+      // None of those heal by retrying blind, so surface them instead of
+      // spinning the reconnect loop forever.
+      return .fatal
+    }
   }
 }
