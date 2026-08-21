@@ -89,6 +89,16 @@ public enum HIDPPControlEvent: Equatable, Sendable {
   }
 }
 
+/// HID++ 2.0 feature IDs used by this project's supported MX Master 3.
+public enum HIDPPFeatureID {
+  public static let battery: UInt16 = 0x1000
+  public static let reprogrammableControls: UInt16 = 0x1B04
+  public static let smartShift: UInt16 = 0x2110
+  public static let wheel: UInt16 = 0x2121
+  public static let thumbWheel: UInt16 = 0x2150
+  public static let adjustableDPI: UInt16 = 0x2201
+}
+
 public struct HIDPPFeatureDescriptor: Codable, Equatable, Sendable {
   public let tableIndex: UInt8
   public let featureID: UInt16
@@ -120,5 +130,9 @@ public struct HIDPPProbeResult: Codable, Equatable, Sendable {
     self.protocolNumber = protocolNumber
     self.targetSoftware = targetSoftware
     self.features = features
+  }
+
+  public func index(of featureID: UInt16) -> UInt8? {
+    features.first(where: { $0.featureID == featureID })?.tableIndex
   }
 }

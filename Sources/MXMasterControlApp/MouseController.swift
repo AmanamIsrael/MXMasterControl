@@ -3,40 +3,18 @@ import Combine
 import MXMasterActions
 import MXMasterCore
 import MXMasterHID
+import MXMasterLifecycle
+import os
 import ServiceManagement
 
 @MainActor
 final class MouseController: ObservableObject {
   static let shared = MouseController()
 
-  enum ConnectionState: Equatable {
-    case connecting
-    case connected
-    case disconnected
-    case reconnecting
-    case permissionRequired
-    case blocked(String)
-    case error(String)
-
-    var title: String {
-      switch self {
-      case .connecting: "Connecting…"
-      case .connected: "Connected"
-      case .disconnected: "Mouse not found"
-      case .reconnecting: "Reconnecting…"
-      case .permissionRequired: "Input Monitoring required"
-      case .blocked(let app): "Quit \(app) to connect"
-      case .error(let message): message
-      }
-    }
-
-    var isDisconnected: Bool {
-      switch self {
-      case .disconnected, .reconnecting: true
-      default: false
-      }
-    }
-  }
+  private static let logger = Logger(
+    subsystem: "com.amanamisrael.MXMasterControl",
+    category: "connection"
+  )
 
   @Published private(set) var connectionState: ConnectionState = .connecting
   @Published private(set) var snapshot: MXMasterReadOnlySnapshot?
@@ -60,8 +38,24 @@ final class MouseController: ObservableObject {
   private var workspaceObservers: [NSObjectProtocol] = []
   private var applicationObservers: [NSObjectProtocol] = []
   private var reconnectTask: Task<Void, Never>?
+  private var reconnectGeneration = 0
   private var pendingSettingTask: Task<Void, Never>?
+  private var settingLoopRunning = false
+  private var pendingSettings: [SettingKind: SettingOperation] = [:]
+  private var settingGeneration = 0
   private var isSleeping = false
+  private let deviceMonitor = HIDPPDeviceMonitor()
+  private var lastArrivalHandling = Date.distantPast
+
+  /// Independent settings coalesce separately: moving the DPI slider must not
+  /// discard a queued wheel toggle (or vice versa).
+  private enum SettingKind: CaseIterable {
+    case dpi
+    case smartShift
+    case wheel
+  }
+
+  private typealias SettingOperation = @MainActor () async throws -> MXMasterReadOnlySnapshot
 
   init() {
     let applicationSupport = FileManager.default.urls(
@@ -80,6 +74,7 @@ final class MouseController: ObservableObject {
     launchAtLogin = SMAppService.mainApp.status == .enabled
     accessibilityGranted = MouseActionDispatcher.accessibilityGranted
     registerLifecycleObservers()
+    startDeviceMonitor()
   }
 
   func start() {
@@ -92,7 +87,7 @@ final class MouseController: ObservableObject {
   }
 
   func setDPI(_ dpi: UInt16) {
-    performSettingChange {
+    performSettingChange(kind: .dpi) {
       let supported = self.snapshot?.dpi?.supported
       let state = try await self.service.setDPI(dpi, supportedDPIs: supported)
       self.configuration.dpi = dpi
@@ -101,7 +96,7 @@ final class MouseController: ObservableObject {
   }
 
   func setSmartShift(mode: SmartShiftMode, threshold: UInt8) {
-    performSettingChange {
+    performSettingChange(kind: .smartShift) {
       let state = try await self.service.setSmartShift(mode: mode, threshold: threshold)
       self.configuration.smartShiftMode = mode
       self.configuration.smartShiftThreshold = threshold
@@ -110,7 +105,7 @@ final class MouseController: ObservableObject {
   }
 
   func setWheelInverted(_ inverted: Bool) {
-    performSettingChange {
+    performSettingChange(kind: .wheel) {
       let state = try await self.service.setWheelInverted(inverted)
       self.configuration.wheelInverted = inverted
       return state
@@ -160,10 +155,19 @@ final class MouseController: ObservableObject {
     if access == .granted {
       Task {
         await service.invalidate()
+        // A first-launch start may have failed with kIOReturnNotPermitted and
+        // torn its handler down; retry now that permission is granted.
+        startDeviceMonitor()
         await loadState(reconcile: true)
       }
     } else {
       connectionState = .permissionRequired
+    }
+  }
+
+  private func startDeviceMonitor() {
+    deviceMonitor.start { [weak self] in
+      Task { @MainActor [weak self] in self?.deviceDidArrive() }
     }
   }
 
@@ -184,28 +188,78 @@ final class MouseController: ObservableObject {
     reconnectTask?.cancel()
     reconnectTask = nil
     actionCoordinator.cancelPendingGesture()
+    deviceMonitor.stop()
     await service.invalidate()
   }
 
   private func performSettingChange(
+    kind: SettingKind,
     _ operation: @escaping @MainActor () async throws -> MXMasterReadOnlySnapshot
   ) {
-    guard !isBusy else { return }
+    pendingSettings[kind] = operation
+    guard !settingLoopRunning else { return }
+    startSettingLoop()
+  }
+
+  /// Removes the next queued operation, FIFO across settings and latest-wins
+  /// within each setting.
+  private func takeNextPendingSetting() -> SettingOperation? {
+    for kind in SettingKind.allCases {
+      if let operation = pendingSettings.removeValue(forKey: kind) { return operation }
+    }
+    return nil
+  }
+
+  private func abandonPendingSettings() {
+    pendingSettings.removeAll()
+  }
+
+  private func startSettingLoop() {
+    guard !settingLoopRunning, let first = takeNextPendingSetting() else { return }
+    settingLoopRunning = true
+    settingGeneration += 1
+    let generation = settingGeneration
     pendingSettingTask = Task {
       isBusy = true
-      defer { isBusy = false }
-      do {
-        snapshot = try await operation()
-        try configurationStore.save(configuration)
-        connectionState = .connected
-      } catch {
-        let classifiedState = classify(error)
-        connectionState = classifiedState
-        if classifiedState.isDisconnected {
-          handleDeviceDisconnected()
+      defer {
+        if settingGeneration == generation {
+          isBusy = false
+          pendingSettingTask = nil
         }
+        settingLoopRunning = false
       }
-      pendingSettingTask = nil
+      var nextOperation = first
+      while true {
+        let state: MXMasterReadOnlySnapshot
+        do {
+          state = try await nextOperation()
+        } catch {
+          failSettingChange(error, generation: generation)
+          return
+        }
+        guard !Task.isCancelled, settingGeneration == generation else { return }
+        snapshot = state
+        do {
+          try configurationStore.save(configuration)
+          connectionState = .connected
+        } catch {
+          failSettingChange(error, generation: generation)
+          return
+        }
+        guard !Task.isCancelled, settingGeneration == generation else { return }
+        guard let queued = takeNextPendingSetting() else { return }
+        nextOperation = queued
+      }
+    }
+  }
+
+  private func failSettingChange(_ error: Error, generation: Int) {
+    guard settingGeneration == generation else { return }
+    abandonPendingSettings()
+    let classifiedState = classify(error)
+    connectionState = classifiedState
+    if classifiedState.isDisconnected {
+      handleDeviceDisconnected()
     }
   }
 
@@ -218,7 +272,7 @@ final class MouseController: ObservableObject {
     }
 
     isBusy = true
-    connectionState = .connecting
+    if !connectionState.isDisconnected { connectionState = .connecting }
     defer { isBusy = false }
     do {
       let state = try await service.readState()
@@ -250,7 +304,9 @@ final class MouseController: ObservableObject {
       reconnectTask?.cancel()
       reconnectTask = nil
       await applyActionConfiguration()
+      if !pendingSettings.isEmpty { startSettingLoop() }
     } catch {
+      abandonPendingSettings()
       snapshot = nil
       let classifiedState = classify(error)
       connectionState = classifiedState
@@ -270,6 +326,7 @@ final class MouseController: ObservableObject {
             reconnectTask = nil
             pendingSettingTask?.cancel()
             pendingSettingTask = nil
+            abandonPendingSettings()
             isBusy = false
             snapshot = nil
             controlCaptureActive = false
@@ -324,9 +381,11 @@ final class MouseController: ObservableObject {
   }
 
   private func handleDeviceDisconnected() {
+    Self.logger.info("Device disconnected; starting silent reconnect loop")
     actionCoordinator.cancelPendingGesture()
     pendingSettingTask?.cancel()
     pendingSettingTask = nil
+    abandonPendingSettings()
     snapshot = nil
     isBusy = false
     connectionState = .reconnecting
@@ -334,12 +393,35 @@ final class MouseController: ObservableObject {
     startReconnectLoop()
   }
 
+  /// The IOHID monitor reported the target device appearing. Recovery becomes
+  /// independent of the backoff curve: restart the loop right away (or refresh
+  /// out of a fatal error, since power-cycling the mouse is the classic fix).
+  private func deviceDidArrive() {
+    guard !isSleeping else { return }
+    guard connectionState.isDisconnected || connectionState == .error else { return }
+    let now = Date()
+    guard now.timeIntervalSince(lastArrivalHandling) >= 1 else { return }
+    lastArrivalHandling = now
+    Self.logger.info("Device arrival detected; retrying now")
+    if connectionState.isDisconnected {
+      reconnectTask?.cancel()
+      reconnectTask = nil
+      startReconnectLoop()
+    } else {
+      refresh()
+    }
+  }
+
   private func startReconnectLoop() {
     guard reconnectTask == nil else { return }
+    reconnectGeneration += 1
+    let generation = reconnectGeneration
+    var schedule = ReconnectSchedule()
     reconnectTask = Task { [weak self] in
-      defer { self?.reconnectTask = nil }
-      var delay: UInt64 = 1_000_000_000
-      let maxDelay: UInt64 = 30_000_000_000
+      // Only clear the handle if no newer loop replaced this one.
+      defer {
+        if self?.reconnectGeneration == generation { self?.reconnectTask = nil }
+      }
       while !Task.isCancelled {
         do {
           try await Task.sleep(for: .milliseconds(500))
@@ -349,11 +431,15 @@ final class MouseController: ObservableObject {
         guard let self, self.connectionState.isDisconnected else { return }
         await self.loadState(reconcile: true)
         if self.connectionState == .connected {
+          Self.logger.info("Reconnected to device")
           return
         }
-        delay = min(delay * 2, maxDelay)
+        Self.logger.debug(
+          "Reconnect attempt failed; retrying in \(schedule.delay.components.seconds)s"
+        )
+        schedule.advance()
         do {
-          try await Task.sleep(for: .nanoseconds(delay))
+          try await Task.sleep(for: schedule.delay)
         } catch {
           return
         }
@@ -391,15 +477,15 @@ final class MouseController: ObservableObject {
     }
   }
 
+  /// Maps a failure to the connection state it should produce. The policy
+  /// lives in MXMasterLifecycle so it stays testable without AppKit or IOHID.
   private func classify(_ error: Error) -> ConnectionState {
-    if let channelError = error as? HIDPPChannelError {
-      switch channelError {
-      case .deviceNotFound: return .reconnecting
-      case .inputMonitoringDenied: return .permissionRequired
-      default: break
-      }
+    Self.logger.error("Connection operation failed: \(error.localizedDescription, privacy: .public)")
+    switch ConnectionClassifier.kind(of: error) {
+    case .transient: return .reconnecting
+    case .permissionRequired: return .permissionRequired
+    case .fatal: return .error
     }
-    return .error(error.localizedDescription)
   }
 
   private static func runningCompetitor() -> String? {

@@ -12,18 +12,15 @@ public struct HIDPPControlReportingProbe {
     defer { channel.close() }
     let protocolInfo = try HIDPPReadOnlyProbe().probeFeatures(channel: channel)
     guard
-      let featureIndex = protocolInfo.features.first(where: { $0.featureID == 0x1B04 })?
-        .tableIndex
+      let featureIndex = protocolInfo.index(of: HIDPPFeatureID.reprogrammableControls)
     else { throw ControlCaptureError.featureUnavailable }
 
     return try controls.map { control in
-      let response = try channel.send(
-        HIDPPMessage(
-          featureIndex: featureIndex,
-          functionID: 2,
-          payload: [UInt8(control.rawValue >> 8), UInt8(control.rawValue & 0xFF), 0]
-        ))
-      return ControlReportingState(payload: response.payload)
+      try HIDPPControlTableReader().readReporting(
+        controlID: control.rawValue,
+        featureIndex: featureIndex,
+        channel: channel
+      )
     }
   }
 }

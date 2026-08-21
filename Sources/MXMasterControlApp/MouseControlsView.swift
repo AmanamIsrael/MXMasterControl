@@ -1,5 +1,6 @@
 import AppKit
 import MXMasterCore
+import MXMasterLifecycle
 import SwiftUI
 
 struct MouseControlsView: View {
@@ -40,11 +41,11 @@ struct MouseControlsView: View {
           .buttonStyle(.borderedProminent)
         }
 
-      case .error(let message):
+      case .error:
         VStack(alignment: .leading, spacing: 8) {
-          Text(message)
+          Text("Something went wrong. Click retry to connect.")
             .font(.caption)
-            .foregroundStyle(.red)
+            .foregroundStyle(.secondary)
           Button("Retry") {
             controller.refresh()
           }
@@ -129,7 +130,8 @@ struct MouseControlsView: View {
     case .connecting, .reconnecting: "computermouse"
     case .disconnected: "computermouse"
     case .permissionRequired: "lock.shield"
-    case .blocked, .error: "exclamationmark.triangle.fill"
+    case .blocked: "exclamationmark.triangle.fill"
+    case .error: "computermouse"
     }
   }
 
@@ -139,7 +141,8 @@ struct MouseControlsView: View {
     case .connecting, .reconnecting: .orange
     case .disconnected: .secondary
     case .permissionRequired: .orange
-    case .blocked, .error: .red
+    case .blocked: .red
+    case .error: .secondary
     }
   }
 
@@ -218,19 +221,6 @@ struct MouseControlsView: View {
           mode: mode,
           threshold: controller.snapshot?.smartShift?.autoDisengage ?? smartShift.autoDisengage
         )
-      }
-    )
-  }
-
-  private func smartShiftThresholdBinding(_ smartShift: SmartShiftSnapshot) -> Binding<Int> {
-    Binding(
-      get: { Int(controller.snapshot?.smartShift?.autoDisengage ?? smartShift.autoDisengage) },
-      set: { value in
-        let mode =
-          SmartShiftMode(
-            rawValue: controller.snapshot?.smartShift?.wheelModeCode ?? smartShift.wheelModeCode
-          ) ?? .freeSpin
-        controller.setSmartShift(mode: mode, threshold: UInt8(value))
       }
     )
   }

@@ -1,5 +1,6 @@
 import Foundation
 import MXMasterCore
+import os
 
 public enum MXMasterServiceError: LocalizedError, Equatable {
   case featureUnavailable(UInt16)
@@ -22,17 +23,30 @@ public enum MXMasterServiceError: LocalizedError, Equatable {
 /// A persistent, single-owner service for the app. All synchronous IOHID work runs on one private
 /// serial queue, keeping it off the main actor and preventing overlapping HID++ requests.
 public final class MXMasterDeviceService: @unchecked Sendable {
+  private static let logger = Logger(
+    subsystem: "com.amanamisrael.MXMasterControl",
+    category: "hid"
+  )
+
   private let queue = DispatchQueue(label: "com.amanamisrael.MXMasterControl.device-service")
-  private var channel: HIDPPDeviceChannel?
+  private var channel: (any HIDPPChannel)?
   private var protocolInfo: HIDPPProbeResult?
   private var captureSession: HIDPPControlCaptureSession?
   private var connectionGeneration: UInt64 = 0
   private var lastCaptureRequests: [ControlCaptureRequest] = []
   private var cachedProbeResult: HIDPPProbeResult?
   private let disconnectHandler: @Sendable () -> Void
+  private let channelFactory: @Sendable (@escaping @Sendable () -> Void) throws -> any HIDPPChannel
 
-  public init(onDisconnect: @escaping @Sendable () -> Void = {}) {
+  public init(
+    onDisconnect: @escaping @Sendable () -> Void = {},
+    channelFactory: @escaping @Sendable (@escaping @Sendable () -> Void) throws
+      -> any HIDPPChannel = { onDisconnect in
+        try HIDPPDeviceChannel(onDisconnect: onDisconnect)
+      }
+  ) {
     disconnectHandler = onDisconnect
+    self.channelFactory = channelFactory
   }
 
   deinit {
@@ -50,8 +64,8 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   public func setDPI(_ dpi: UInt16, supportedDPIs: [UInt16]? = nil) async throws -> MXMasterReadOnlySnapshot {
     try await perform { service in
       let (channel, protocolInfo) = try service.connection()
-      guard let index = service.index(of: 0x2201, in: protocolInfo) else {
-        throw MXMasterServiceError.featureUnavailable(0x2201)
+      guard let index = protocolInfo.index(of: HIDPPFeatureID.adjustableDPI) else {
+        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.adjustableDPI)
       }
       if let supportedDPIs {
         guard supportedDPIs.contains(dpi) else {
@@ -88,8 +102,8 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     }
     return try await perform { service in
       let (channel, protocolInfo) = try service.connection()
-      guard let index = service.index(of: 0x2110, in: protocolInfo) else {
-        throw MXMasterServiceError.featureUnavailable(0x2110)
+      guard let index = protocolInfo.index(of: HIDPPFeatureID.smartShift) else {
+        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.smartShift)
       }
       _ = try channel.send(
         HIDPPMessage(
@@ -109,8 +123,8 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   public func setWheelInverted(_ inverted: Bool) async throws -> MXMasterReadOnlySnapshot {
     try await perform { service in
       let (channel, protocolInfo) = try service.connection()
-      guard let index = service.index(of: 0x2121, in: protocolInfo) else {
-        throw MXMasterServiceError.featureUnavailable(0x2121)
+      guard let index = protocolInfo.index(of: HIDPPFeatureID.wheel) else {
+        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.wheel)
       }
       let current = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
       var modeByte = current.payload[0]
@@ -131,8 +145,8 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   public func applyDPI(_ dpi: UInt16, supportedDPIs: [UInt16]? = nil) async throws {
     try await perform { service in
       let (channel, protocolInfo) = try service.connection()
-      guard let index = service.index(of: 0x2201, in: protocolInfo) else {
-        throw MXMasterServiceError.featureUnavailable(0x2201)
+      guard let index = protocolInfo.index(of: HIDPPFeatureID.adjustableDPI) else {
+        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.adjustableDPI)
       }
       if let supportedDPIs {
         guard supportedDPIs.contains(dpi) else {
@@ -168,8 +182,8 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     }
     try await perform { service in
       let (channel, protocolInfo) = try service.connection()
-      guard let index = service.index(of: 0x2110, in: protocolInfo) else {
-        throw MXMasterServiceError.featureUnavailable(0x2110)
+      guard let index = protocolInfo.index(of: HIDPPFeatureID.smartShift) else {
+        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.smartShift)
       }
       _ = try channel.send(
         HIDPPMessage(
@@ -190,8 +204,8 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   public func applyWheelInverted(_ inverted: Bool) async throws {
     try await perform { service in
       let (channel, protocolInfo) = try service.connection()
-      guard let index = service.index(of: 0x2121, in: protocolInfo) else {
-        throw MXMasterServiceError.featureUnavailable(0x2121)
+      guard let index = protocolInfo.index(of: HIDPPFeatureID.wheel) else {
+        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.wheel)
       }
       let current = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
       var modeByte = current.payload[0]
@@ -278,6 +292,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
       _ = try establishConnection()
       return true
     } catch {
+      Self.logger.debug("Connect attempt failed: \(error.localizedDescription, privacy: .public)")
       return false
     }
   }
@@ -286,10 +301,10 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   /// table when the ping matches. On success, `channel` and `protocolInfo` are
   /// set. On failure, any partially opened channel is closed and the error is
   /// rethrown.
-  private func establishConnection() throws -> (HIDPPDeviceChannel, HIDPPProbeResult) {
+  private func establishConnection() throws -> (any HIDPPChannel, HIDPPProbeResult) {
     connectionGeneration &+= 1
     let generation = connectionGeneration
-    let newChannel = try HIDPPDeviceChannel { [weak self] in
+    let newChannel = try channelFactory { [weak self] in
       self?.deviceDidDisconnect(generation: generation)
     }
     do {
@@ -314,7 +329,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     }
   }
 
-  private func connection() throws -> (HIDPPDeviceChannel, HIDPPProbeResult) {
+  private func connection() throws -> (any HIDPPChannel, HIDPPProbeResult) {
     if let channel, let protocolInfo { return (channel, protocolInfo) }
     return try establishConnection()
   }
@@ -322,6 +337,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   private func deviceDidDisconnect(generation: UInt64) {
     queue.async { [weak self] in
       guard let self, connectionGeneration == generation else { return }
+      Self.logger.info("Device removal reported; tearing down channel")
       captureSession?.abandonAfterDeviceRemoval()
       captureSession = nil
       channel?.close()
@@ -330,10 +346,6 @@ public final class MXMasterDeviceService: @unchecked Sendable {
       lastCaptureRequests = []
       disconnectHandler()
     }
-  }
-
-  private func index(of featureID: UInt16, in info: HIDPPProbeResult) -> UInt8? {
-    info.features.first(where: { $0.featureID == featureID })?.tableIndex
   }
 
   private func perform<T: Sendable>(
@@ -345,6 +357,9 @@ public final class MXMasterDeviceService: @unchecked Sendable {
           continuation.resume(returning: try operation(self))
         } catch {
           if error is HIDPPChannelError {
+            Self.logger.debug(
+              "Operation failed with channel error; resetting channel: \(error.localizedDescription, privacy: .public)"
+            )
             try? captureSession?.close()
             captureSession = nil
             channel?.close()

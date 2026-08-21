@@ -27,18 +27,18 @@ public struct HIDPPControlReportingReconciler {
 
   public func reconcile(
     controls: [MouseControl],
-    channel: HIDPPDeviceChannel,
+    channel: any HIDPPChannel,
     protocolInfo: HIDPPProbeResult
   ) throws -> ControlReportingReconciliationResult {
     guard
-      let featureIndex = protocolInfo.features.first(where: { $0.featureID == 0x1B04 })?
-        .tableIndex
+      let featureIndex = protocolInfo.index(of: HIDPPFeatureID.reprogrammableControls)
     else { throw ControlCaptureError.featureUnavailable }
 
     var normalizedControlIDs: [UInt16] = []
     var finalStates: [ControlReportingState] = []
+    let controlTable = HIDPPControlTableReader()
     for control in controls {
-      let current = try readReporting(
+      let current = try controlTable.readReporting(
         controlID: control.rawValue,
         featureIndex: featureIndex,
         channel: channel
@@ -54,7 +54,7 @@ public struct HIDPPControlReportingReconciler {
           functionID: 3,
           payload: current.nativePassthroughPayload
         ))
-      let normalized = try readReporting(
+      let normalized = try controlTable.readReporting(
         controlID: control.rawValue,
         featureIndex: featureIndex,
         channel: channel
@@ -69,19 +69,5 @@ public struct HIDPPControlReportingReconciler {
       normalizedControlIDs: normalizedControlIDs,
       finalStates: finalStates
     )
-  }
-
-  private func readReporting(
-    controlID: UInt16,
-    featureIndex: UInt8,
-    channel: HIDPPDeviceChannel
-  ) throws -> ControlReportingState {
-    let response = try channel.send(
-      HIDPPMessage(
-        featureIndex: featureIndex,
-        functionID: 2,
-        payload: [UInt8(controlID >> 8), UInt8(controlID & 0xFF), 0]
-      ))
-    return ControlReportingState(payload: response.payload)
   }
 }

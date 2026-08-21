@@ -9,6 +9,7 @@ public enum HIDPPChannelError: LocalizedError, Equatable {
   case deviceOpenFailed(code: Int32)
   case requestAlreadyPending
   case reportWriteFailed(code: Int32)
+  case responseDeliveryFailed(code: Int32)
   case responseTimedOut
   case malformedResponse
   case deviceError(code: UInt8)
@@ -23,6 +24,8 @@ public enum HIDPPChannelError: LocalizedError, Equatable {
     case .deviceOpenFailed(let code): "MX Master 3 HID open failed (IOReturn \(code))."
     case .requestAlreadyPending: "Another HID++ request is already pending."
     case .reportWriteFailed(let code): "HID++ report write failed (IOReturn \(code))."
+    case .responseDeliveryFailed(let code):
+      "The HID++ response could not be delivered to the app (IOReturn \(code))."
     case .responseTimedOut: "The MX Master 3 did not answer the HID++ request in time."
     case .malformedResponse: "The MX Master 3 returned a malformed HID++ response."
     case .deviceError(let code):
@@ -35,7 +38,7 @@ public enum HIDPPChannelError: LocalizedError, Equatable {
 /// Owns the direct-Bluetooth IOHID channel and serializes HID++ requests. This first version is
 /// intentionally synchronous for the diagnostic CLI; the app-facing session will isolate it on
 /// its own actor rather than allowing calls on the main actor.
-public final class HIDPPDeviceChannel: @unchecked Sendable {
+public final class HIDPPDeviceChannel: HIDPPChannel, @unchecked Sendable {
   private final class PendingResponse {
     let request: HIDPPMessage
     var bytes: [UInt8]?
@@ -87,7 +90,7 @@ public final class HIDPPDeviceChannel: @unchecked Sendable {
     guard
       let devices = IOHIDManagerCopyDevices(manager),
       let selected = (devices as NSSet)
-        .map({ $0 as! IOHIDDevice })
+        .compactMap(Self.iohidDevice)
         .first(where: Self.hasLongHIDPPUsage)
     else {
       IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -187,7 +190,7 @@ public final class HIDPPDeviceChannel: @unchecked Sendable {
     responseCondition.unlock()
 
     if closed { throw HIDPPChannelError.channelClosed }
-    if let callbackError { throw HIDPPChannelError.reportWriteFailed(code: callbackError) }
+    if let callbackError { throw HIDPPChannelError.responseDeliveryFailed(code: callbackError) }
     guard let responseBytes else { throw HIDPPChannelError.responseTimedOut }
 
     if responseBytes[2] == 0xFF {
@@ -266,6 +269,11 @@ public final class HIDPPDeviceChannel: @unchecked Sendable {
     responseCondition.lock()
     if pendingResponse === pending { pendingResponse = nil }
     responseCondition.unlock()
+  }
+
+  private static func iohidDevice(_ element: Any) -> IOHIDDevice? {
+    guard CFGetTypeID(element as AnyObject) == IOHIDDeviceGetTypeID() else { return nil }
+    return unsafeDowncast(element as AnyObject, to: IOHIDDevice.self)
   }
 
   private static func hasLongHIDPPUsage(_ device: IOHIDDevice) -> Bool {
