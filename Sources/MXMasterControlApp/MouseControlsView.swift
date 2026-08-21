@@ -1,5 +1,6 @@
 import AppKit
 import MXMasterCore
+import MXMasterLifecycle
 import SwiftUI
 
 struct MouseControlsView: View {
