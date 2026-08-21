@@ -31,8 +31,10 @@ struct MXMasterControlApp: App {
       Image(systemName: "computermouse").foregroundStyle(.secondary)
     case .permissionRequired:
       Image(systemName: "computermouse").foregroundStyle(.orange)
-    case .blocked, .error:
+    case .blocked:
       Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
+    case .error:
+      Image(systemName: "computermouse").foregroundStyle(.secondary)
     }
   }
 
@@ -43,7 +45,7 @@ struct MXMasterControlApp: App {
     case .disconnected: "MX Master Control — Not found"
     case .permissionRequired: "MX Master Control — Permission required"
     case .blocked: "MX Master Control — Blocked"
-    case .error: "MX Master Control — Error"
+    case .error: "MX Master Control — Connection issue"
     }
   }
 }

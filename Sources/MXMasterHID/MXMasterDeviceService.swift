@@ -1,5 +1,6 @@
 import Foundation
 import MXMasterCore
+import os
 
 public enum MXMasterServiceError: LocalizedError, Equatable {
   case featureUnavailable(UInt16)
@@ -22,6 +23,11 @@ public enum MXMasterServiceError: LocalizedError, Equatable {
 /// A persistent, single-owner service for the app. All synchronous IOHID work runs on one private
 /// serial queue, keeping it off the main actor and preventing overlapping HID++ requests.
 public final class MXMasterDeviceService: @unchecked Sendable {
+  private static let logger = Logger(
+    subsystem: "com.amanamisrael.MXMasterControl",
+    category: "hid"
+  )
+
   private let queue = DispatchQueue(label: "com.amanamisrael.MXMasterControl.device-service")
   private var channel: (any HIDPPChannel)?
   private var protocolInfo: HIDPPProbeResult?
@@ -286,6 +292,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
       _ = try establishConnection()
       return true
     } catch {
+      Self.logger.debug("Connect attempt failed: \(error.localizedDescription, privacy: .public)")
       return false
     }
   }
@@ -330,6 +337,7 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   private func deviceDidDisconnect(generation: UInt64) {
     queue.async { [weak self] in
       guard let self, connectionGeneration == generation else { return }
+      Self.logger.info("Device removal reported; tearing down channel")
       captureSession?.abandonAfterDeviceRemoval()
       captureSession = nil
       channel?.close()
@@ -349,6 +357,9 @@ public final class MXMasterDeviceService: @unchecked Sendable {
           continuation.resume(returning: try operation(self))
         } catch {
           if error is HIDPPChannelError {
+            Self.logger.debug(
+              "Operation failed with channel error; resetting channel: \(error.localizedDescription, privacy: .public)"
+            )
             try? captureSession?.close()
             captureSession = nil
             channel?.close()

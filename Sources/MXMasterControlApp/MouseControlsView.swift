@@ -40,11 +40,11 @@ struct MouseControlsView: View {
           .buttonStyle(.borderedProminent)
         }
 
-      case .error(let message):
+      case .error:
         VStack(alignment: .leading, spacing: 8) {
-          Text(message)
+          Text("Something went wrong. Click retry to connect.")
             .font(.caption)
-            .foregroundStyle(.red)
+            .foregroundStyle(.secondary)
           Button("Retry") {
             controller.refresh()
           }
@@ -129,7 +129,8 @@ struct MouseControlsView: View {
     case .connecting, .reconnecting: "computermouse"
     case .disconnected: "computermouse"
     case .permissionRequired: "lock.shield"
-    case .blocked, .error: "exclamationmark.triangle.fill"
+    case .blocked: "exclamationmark.triangle.fill"
+    case .error: "computermouse"
     }
   }
 
@@ -139,7 +140,8 @@ struct MouseControlsView: View {
     case .connecting, .reconnecting: .orange
     case .disconnected: .secondary
     case .permissionRequired: .orange
-    case .blocked, .error: .red
+    case .blocked: .red
+    case .error: .secondary
     }
   }
 

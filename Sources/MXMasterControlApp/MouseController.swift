@@ -3,11 +3,17 @@ import Combine
 import MXMasterActions
 import MXMasterCore
 import MXMasterHID
+import os
 import ServiceManagement
 
 @MainActor
 final class MouseController: ObservableObject {
   static let shared = MouseController()
+
+  private static let logger = Logger(
+    subsystem: "com.amanamisrael.MXMasterControl",
+    category: "connection"
+  )
 
   enum ConnectionState: Equatable {
     case connecting
@@ -16,7 +22,7 @@ final class MouseController: ObservableObject {
     case reconnecting
     case permissionRequired
     case blocked(String)
-    case error(String)
+    case error
 
     var title: String {
       switch self {
@@ -26,7 +32,7 @@ final class MouseController: ObservableObject {
       case .reconnecting: "Reconnecting…"
       case .permissionRequired: "Input Monitoring required"
       case .blocked(let app): "Quit \(app) to connect"
-      case .error(let message): message
+      case .error: "Something went wrong"
       }
     }
 
@@ -255,7 +261,7 @@ final class MouseController: ObservableObject {
     }
 
     isBusy = true
-    connectionState = .connecting
+    if !connectionState.isDisconnected { connectionState = .connecting }
     defer { isBusy = false }
     do {
       let state = try await service.readState()
@@ -364,6 +370,7 @@ final class MouseController: ObservableObject {
   }
 
   private func handleDeviceDisconnected() {
+    Self.logger.info("Device disconnected; starting silent reconnect loop")
     actionCoordinator.cancelPendingGesture()
     pendingSettingTask?.cancel()
     pendingSettingTask = nil
@@ -380,7 +387,9 @@ final class MouseController: ObservableObject {
     reconnectTask = Task { [weak self] in
       defer { self?.reconnectTask = nil }
       var delay: UInt64 = 1_000_000_000
-      let maxDelay: UInt64 = 30_000_000_000
+      // A short cap keeps recovery snappy when the mouse comes back (e.g. it
+      // wakes as soon as the user moves it) while staying quiet and cheap.
+      let maxDelay: UInt64 = 10_000_000_000
       while !Task.isCancelled {
         do {
           try await Task.sleep(for: .milliseconds(500))
@@ -390,8 +399,10 @@ final class MouseController: ObservableObject {
         guard let self, self.connectionState.isDisconnected else { return }
         await self.loadState(reconcile: true)
         if self.connectionState == .connected {
+          Self.logger.info("Reconnected to device")
           return
         }
+        Self.logger.debug("Reconnect attempt failed; retrying in \(Double(delay) / 1_000_000_000, format: .fixed(precision: 1))s")
         delay = min(delay * 2, maxDelay)
         do {
           try await Task.sleep(for: .nanoseconds(delay))
@@ -432,15 +443,20 @@ final class MouseController: ObservableObject {
     }
   }
 
+  /// Maps a failure to the connection state it should produce. Transport-level
+  /// HID++ errors (timeouts, closed channels, IO failures) are treated as
+  /// transient: they are not the user's fault, so they keep the silent
+  /// reconnect loop running instead of surfacing an error. Only faults that
+  /// retrying cannot fix become `.error`.
   private func classify(_ error: Error) -> ConnectionState {
+    Self.logger.error("Connection operation failed: \(error.localizedDescription, privacy: .public)")
     if let channelError = error as? HIDPPChannelError {
       switch channelError {
-      case .deviceNotFound: return .reconnecting
       case .inputMonitoringDenied: return .permissionRequired
-      default: break
+      default: return .reconnecting
       }
     }
-    return .error(error.localizedDescription)
+    return .error
   }
 
   private static func runningCompetitor() -> String? {
