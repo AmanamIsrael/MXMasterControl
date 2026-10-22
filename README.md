@@ -87,14 +87,22 @@ The app requests Input Monitoring through Apple's HID access API and links direc
 System Settings pane when access is missing. Custom actions request Accessibility only when they
 are enabled; without it, controls remain native rather than being swallowed.
 
-For stable privacy permissions, sign builds with an Apple Development or Developer ID identity:
+`scripts/build-app.sh` builds `dist/MX Master Control.app` with its icon and signs it. Add
+`--install` to also copy it to `/Applications`. Quit the installed app first.
+
+macOS ties Input Monitoring and Accessibility access to the app's signature. Run this once per
+Mac, so that access carries over from build to build:
 
 ```sh
-MXMASTER_SIGNING_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/build-app.sh
+./scripts/signing-cert.sh
 ```
 
-If no identity is supplied, the build is ad-hoc signed and warns that privacy access can require
-reauthorization after a rebuild.
+The build signs with `MXMASTER_SIGNING_IDENTITY` if you set it. Otherwise it uses a valid Apple
+Development or Developer ID certificate, then the local certificate. If none is available, the
+build is ad hoc signed and prints a warning.
+
+The icon is an Icon Composer document, `Resources/AppIcon.icon`. Edit it in Icon Composer. The
+build compiles it with `actool`.
 
 Development builds can open the Settings scene directly for UI testing:
 

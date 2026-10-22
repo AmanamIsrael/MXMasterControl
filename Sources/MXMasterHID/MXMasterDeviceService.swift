@@ -55,41 +55,13 @@ public final class MXMasterDeviceService: @unchecked Sendable {
   }
 
   public func readState() async throws -> MXMasterReadOnlySnapshot {
-    try await perform { service in
-      let (channel, protocolInfo) = try service.connection()
-      return try HIDPPReadOnlyProbe().readState(channel: channel, protocolInfo: protocolInfo)
-    }
+    try await perform { service in try service.readFullState() }
   }
 
   public func setDPI(_ dpi: UInt16, supportedDPIs: [UInt16]? = nil) async throws -> MXMasterReadOnlySnapshot {
     try await perform { service in
-      let (channel, protocolInfo) = try service.connection()
-      guard let index = protocolInfo.index(of: HIDPPFeatureID.adjustableDPI) else {
-        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.adjustableDPI)
-      }
-      if let supportedDPIs {
-        guard supportedDPIs.contains(dpi) else {
-          throw MXMasterServiceError.unsupportedDPI(dpi)
-        }
-      } else {
-        let before = try HIDPPReadOnlyProbe().readDPIOnly(channel: channel, protocolInfo: protocolInfo)
-        guard before?.supported.contains(dpi) == true else {
-          throw MXMasterServiceError.unsupportedDPI(dpi)
-        }
-      }
-      _ = try channel.send(
-        HIDPPMessage(
-          featureIndex: index,
-          functionID: 3,
-          payload: [0, UInt8(dpi >> 8), UInt8(dpi & 0xFF)]
-        ))
-      let probe = HIDPPReadOnlyProbe()
-      let dpiSnapshot = try probe.readDPIOnly(channel: channel, protocolInfo: protocolInfo)
-      guard dpiSnapshot?.current == dpi else {
-        throw MXMasterServiceError.verificationFailed(setting: "DPI")
-      }
-      let fullState = try probe.readState(channel: channel, protocolInfo: protocolInfo)
-      return fullState
+      try service.writeDPI(dpi, supportedDPIs: supportedDPIs)
+      return try service.readFullState()
     }
   }
 
@@ -97,128 +69,33 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     mode: SmartShiftMode,
     threshold: UInt8
   ) async throws -> MXMasterReadOnlySnapshot {
-    guard (1...254).contains(threshold) else {
-      throw MXMasterServiceError.invalidSmartShiftThreshold(threshold)
-    }
-    return try await perform { service in
-      let (channel, protocolInfo) = try service.connection()
-      guard let index = protocolInfo.index(of: HIDPPFeatureID.smartShift) else {
-        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.smartShift)
-      }
-      _ = try channel.send(
-        HIDPPMessage(
-          featureIndex: index,
-          functionID: 1,
-          payload: [mode.rawValue, threshold, 0]
-        ))
-      let after = try HIDPPReadOnlyProbe().readState(channel: channel, protocolInfo: protocolInfo)
-      guard
-        after.smartShift?.wheelModeCode == mode.rawValue,
-        after.smartShift?.autoDisengage == threshold
-      else { throw MXMasterServiceError.verificationFailed(setting: "SmartShift state") }
-      return after
+    try await perform { service in
+      try service.writeSmartShift(mode: mode, threshold: threshold)
+      return try service.readFullState()
     }
   }
 
   public func setWheelInverted(_ inverted: Bool) async throws -> MXMasterReadOnlySnapshot {
     try await perform { service in
-      let (channel, protocolInfo) = try service.connection()
-      guard let index = protocolInfo.index(of: HIDPPFeatureID.wheel) else {
-        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.wheel)
-      }
-      let current = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
-      var modeByte = current.payload[0]
-      if inverted { modeByte |= 1 << 2 } else { modeByte &= ~(1 << 2) }
-      _ = try channel.send(
-        HIDPPMessage(featureIndex: index, functionID: 2, payload: [modeByte, 0, 0])
-      )
-      let after = try HIDPPReadOnlyProbe().readState(channel: channel, protocolInfo: protocolInfo)
-      guard after.wheel?.inverted == inverted else {
-        throw MXMasterServiceError.verificationFailed(setting: "wheel direction")
-      }
-      return after
+      try service.writeWheelInverted(inverted)
+      return try service.readFullState()
     }
   }
 
   /// Applies DPI without a redundant full state read. Verifies with a targeted
   /// DPI read-back only. Use `readState()` separately for the full snapshot.
   public func applyDPI(_ dpi: UInt16, supportedDPIs: [UInt16]? = nil) async throws {
-    try await perform { service in
-      let (channel, protocolInfo) = try service.connection()
-      guard let index = protocolInfo.index(of: HIDPPFeatureID.adjustableDPI) else {
-        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.adjustableDPI)
-      }
-      if let supportedDPIs {
-        guard supportedDPIs.contains(dpi) else {
-          throw MXMasterServiceError.unsupportedDPI(dpi)
-        }
-      } else {
-        let before = try HIDPPReadOnlyProbe().readDPIOnly(channel: channel, protocolInfo: protocolInfo)
-        guard before?.supported.contains(dpi) == true else {
-          throw MXMasterServiceError.unsupportedDPI(dpi)
-        }
-      }
-      _ = try channel.send(
-        HIDPPMessage(
-          featureIndex: index,
-          functionID: 3,
-          payload: [0, UInt8(dpi >> 8), UInt8(dpi & 0xFF)]
-        ))
-      let probe = HIDPPReadOnlyProbe()
-      let dpiSnapshot = try probe.readDPIOnly(channel: channel, protocolInfo: protocolInfo)
-      guard dpiSnapshot?.current == dpi else {
-        throw MXMasterServiceError.verificationFailed(setting: "DPI")
-      }
-    }
+    try await perform { service in try service.writeDPI(dpi, supportedDPIs: supportedDPIs) }
   }
 
   /// Applies SmartShift mode and threshold without a redundant full state read.
-  public func applySmartShift(
-    mode: SmartShiftMode,
-    threshold: UInt8
-  ) async throws {
-    guard (1...254).contains(threshold) else {
-      throw MXMasterServiceError.invalidSmartShiftThreshold(threshold)
-    }
-    try await perform { service in
-      let (channel, protocolInfo) = try service.connection()
-      guard let index = protocolInfo.index(of: HIDPPFeatureID.smartShift) else {
-        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.smartShift)
-      }
-      _ = try channel.send(
-        HIDPPMessage(
-          featureIndex: index,
-          functionID: 1,
-          payload: [mode.rawValue, threshold, 0]
-        ))
-      let after = try HIDPPReadOnlyProbe().readSmartShiftOnly(
-        channel: channel, protocolInfo: protocolInfo)
-      guard
-        after?.wheelModeCode == mode.rawValue,
-        after?.autoDisengage == threshold
-      else { throw MXMasterServiceError.verificationFailed(setting: "SmartShift state") }
-    }
+  public func applySmartShift(mode: SmartShiftMode, threshold: UInt8) async throws {
+    try await perform { service in try service.writeSmartShift(mode: mode, threshold: threshold) }
   }
 
   /// Applies wheel inversion without a redundant full state read.
   public func applyWheelInverted(_ inverted: Bool) async throws {
-    try await perform { service in
-      let (channel, protocolInfo) = try service.connection()
-      guard let index = protocolInfo.index(of: HIDPPFeatureID.wheel) else {
-        throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.wheel)
-      }
-      let current = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
-      var modeByte = current.payload[0]
-      if inverted { modeByte |= 1 << 2 } else { modeByte &= ~(1 << 2) }
-      _ = try channel.send(
-        HIDPPMessage(featureIndex: index, functionID: 2, payload: [modeByte, 0, 0])
-      )
-      let after = try HIDPPReadOnlyProbe().readWheelOnly(
-        channel: channel, protocolInfo: protocolInfo)
-      guard after?.inverted == inverted else {
-        throw MXMasterServiceError.verificationFailed(setting: "wheel direction")
-      }
-    }
+    try await perform { service in try service.writeWheelInverted(inverted) }
   }
 
   public func configureControlCapture(
@@ -285,11 +162,77 @@ public final class MXMasterDeviceService: @unchecked Sendable {
     }
   }
 
-  /// Tries to open a channel and establish protocol info using a cached feature
-  /// table when available. Returns `false` on any failure (caller should retry).
+  // MARK: Serialized writers. Each one writes, then verifies with a targeted read-back.
+  // They run only inside `perform`, on the service queue.
+
+  private func readFullState() throws -> MXMasterReadOnlySnapshot {
+    let (channel, protocolInfo) = try connection()
+    return try HIDPPReadOnlyProbe().readState(channel: channel, protocolInfo: protocolInfo)
+  }
+
+  private func writeDPI(_ dpi: UInt16, supportedDPIs: [UInt16]?) throws {
+    let (channel, protocolInfo) = try connection()
+    guard let index = protocolInfo.index(of: HIDPPFeatureID.adjustableDPI) else {
+      throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.adjustableDPI)
+    }
+    let probe = HIDPPReadOnlyProbe()
+    var supported = supportedDPIs
+    if supported == nil {
+      supported = try probe.readDPIOnly(channel: channel, protocolInfo: protocolInfo)?.supported
+    }
+    guard supported?.contains(dpi) == true else { throw MXMasterServiceError.unsupportedDPI(dpi) }
+    _ = try channel.send(
+      HIDPPMessage(
+        featureIndex: index,
+        functionID: 3,
+        payload: [0, UInt8(dpi >> 8), UInt8(dpi & 0xFF)]
+      ))
+    guard try probe.readDPIOnly(channel: channel, protocolInfo: protocolInfo)?.current == dpi else {
+      throw MXMasterServiceError.verificationFailed(setting: "DPI")
+    }
+  }
+
+  private func writeSmartShift(mode: SmartShiftMode, threshold: UInt8) throws {
+    guard (1...254).contains(threshold) else {
+      throw MXMasterServiceError.invalidSmartShiftThreshold(threshold)
+    }
+    let (channel, protocolInfo) = try connection()
+    guard let index = protocolInfo.index(of: HIDPPFeatureID.smartShift) else {
+      throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.smartShift)
+    }
+    _ = try channel.send(
+      HIDPPMessage(featureIndex: index, functionID: 1, payload: [mode.rawValue, threshold, 0])
+    )
+    let after = try HIDPPReadOnlyProbe().readSmartShiftOnly(
+      channel: channel, protocolInfo: protocolInfo)
+    guard after?.wheelModeCode == mode.rawValue, after?.autoDisengage == threshold else {
+      throw MXMasterServiceError.verificationFailed(setting: "SmartShift state")
+    }
+  }
+
+  private func writeWheelInverted(_ inverted: Bool) throws {
+    let (channel, protocolInfo) = try connection()
+    guard let index = protocolInfo.index(of: HIDPPFeatureID.wheel) else {
+      throw MXMasterServiceError.featureUnavailable(HIDPPFeatureID.wheel)
+    }
+    let current = try channel.send(HIDPPMessage(featureIndex: index, functionID: 1))
+    var modeByte = current.payload[0]
+    if inverted { modeByte |= 1 << 2 } else { modeByte &= ~(1 << 2) }
+    _ = try channel.send(
+      HIDPPMessage(featureIndex: index, functionID: 2, payload: [modeByte, 0, 0])
+    )
+    let after = try HIDPPReadOnlyProbe().readWheelOnly(channel: channel, protocolInfo: protocolInfo)
+    guard after?.inverted == inverted else {
+      throw MXMasterServiceError.verificationFailed(setting: "wheel direction")
+    }
+  }
+
+  /// Reuses the live channel, or opens one and establishes protocol info using a
+  /// cached feature table when available. Returns `false` on any failure (caller
+  /// should retry). Never opens a second channel over a live one.
   private func attemptConnect() -> Bool {
     do {
-      _ = try establishConnection()
+      _ = try connection()
       return true
     } catch {
       Self.logger.debug("Connect attempt failed: \(error.localizedDescription, privacy: .public)")
