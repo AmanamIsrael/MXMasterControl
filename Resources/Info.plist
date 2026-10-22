@@ -8,6 +8,10 @@
   <string>MX Master Control</string>
   <key>CFBundleExecutable</key>
   <string>MXMasterControl</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundleIconName</key>
+  <string>AppIcon</string>
   <key>CFBundleIdentifier</key>
   <string>com.amanamisrael.MXMasterControl</string>
   <key>CFBundleInfoDictionaryVersion</key>
