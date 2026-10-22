@@ -25,17 +25,17 @@ struct MXMasterControlApp: App {
   private var menuBarImage: some View {
     switch controller.connectionState {
     case .connected:
-      Image(systemName: "computermouse.fill").foregroundStyle(.green)
+      Image(nsImage: MenuBarIcon.filled).foregroundStyle(.green)
     case .connecting, .reconnecting:
-      Image(systemName: "computermouse").foregroundStyle(.orange)
+      Image(nsImage: MenuBarIcon.outlined).foregroundStyle(.orange)
     case .disconnected:
-      Image(systemName: "computermouse").foregroundStyle(.secondary)
+      Image(nsImage: MenuBarIcon.outlined).foregroundStyle(.secondary)
     case .permissionRequired:
-      Image(systemName: "computermouse").foregroundStyle(.orange)
+      Image(nsImage: MenuBarIcon.outlined).foregroundStyle(.orange)
     case .blocked:
       Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red)
     case .error:
-      Image(systemName: "computermouse").foregroundStyle(.secondary)
+      Image(nsImage: MenuBarIcon.outlined).foregroundStyle(.secondary)
     }
   }
 

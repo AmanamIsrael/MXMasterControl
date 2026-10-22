@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/icon-dark.png">
+    <img src="docs/icon.png" width="128" height="128" alt="MX Master Control icon">
+  </picture>
+</p>
+
 # MX Master Control
 
 ![Settings window](docs/screenshot.png)
