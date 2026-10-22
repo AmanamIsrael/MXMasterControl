@@ -433,7 +433,7 @@ private final class ScriptedMouse: @unchecked Sendable {
           }
           return try mouse.responder(message)
         },
-        onClose: { closeCount.next() }
+        onClose: { _ = closeCount.next() }
       )
     }
   )
@@ -465,6 +465,29 @@ private final class ScriptedMouse: @unchecked Sendable {
   #expect(counter.count == 2)
 }
 
+@Test func waitForDeviceReusesLiveChannelInsteadOfOpeningAnother() async throws {
+  let mouse = ScriptedMouse()
+  let counter = CallCounter()
+  let closeCount = CallCounter()
+  let service = MXMasterDeviceService(
+    channelFactory: { _ in
+      _ = counter.next()
+      return MockHIDPPChannel(
+        onSend: { try mouse.responder($0) },
+        onClose: { _ = closeCount.next() }
+      )
+    }
+  )
+
+  _ = try await service.readState()
+  let ready = await service.waitForDevice(timeout: 0.9)
+  await service.invalidate()
+
+  #expect(ready)
+  #expect(counter.count == 1)
+  #expect(closeCount.count == 1)
+}
+
 @Test func invalidateClosesActiveChannelAndNextReadReconnects() async throws {
   let mouse = ScriptedMouse()
   let counter = CallCounter()
@@ -474,7 +497,7 @@ private final class ScriptedMouse: @unchecked Sendable {
       _ = counter.next()
       return MockHIDPPChannel(
         onSend: { try mouse.responder($0) },
-        onClose: { closeCount.next() }
+        onClose: { _ = closeCount.next() }
       )
     }
   )
@@ -493,7 +516,7 @@ private final class ScriptedMouse: @unchecked Sendable {
   let serviceOnDisconnect = CallCounter()
   let internalDisconnect = CallbackBox()
   let service = MXMasterDeviceService(
-    onDisconnect: { serviceOnDisconnect.next() },
+    onDisconnect: { _ = serviceOnDisconnect.next() },
     channelFactory: { onDisconnect in
       internalDisconnect.set(onDisconnect)
       _ = counter.next()

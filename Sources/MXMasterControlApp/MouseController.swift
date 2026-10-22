@@ -155,9 +155,6 @@ final class MouseController: ObservableObject {
     if access == .granted {
       Task {
         await service.invalidate()
-        // A first-launch start may have failed with kIOReturnNotPermitted and
-        // torn its handler down; retry now that permission is granted.
-        startDeviceMonitor()
         await loadState(reconcile: true)
       }
     } else {
@@ -165,6 +162,8 @@ final class MouseController: ObservableObject {
     }
   }
 
+  /// Idempotent. A first-launch start fails with kIOReturnNotPermitted until
+  /// Input Monitoring is granted, so every successful connection retries it.
   private func startDeviceMonitor() {
     deviceMonitor.start { [weak self] in
       Task { @MainActor [weak self] in self?.deviceDidArrive() }
@@ -276,6 +275,8 @@ final class MouseController: ObservableObject {
     defer { isBusy = false }
     do {
       let state = try await service.readState()
+      // Sleep invalidated the service while this read was in flight.
+      guard !isSleeping else { return }
       var didWrite = false
       if reconcile {
         if let dpi = configuration.dpi, state.dpi?.current != dpi {
@@ -300,12 +301,15 @@ final class MouseController: ObservableObject {
         }
       }
       snapshot = didWrite ? try await service.readState() : state
+      guard !isSleeping else { return }
       connectionState = .connected
+      startDeviceMonitor()
       reconnectTask?.cancel()
       reconnectTask = nil
       await applyActionConfiguration()
       if !pendingSettings.isEmpty { startSettingLoop() }
     } catch {
+      guard !isSleeping else { return }
       abandonPendingSettings()
       snapshot = nil
       let classifiedState = classify(error)
@@ -364,8 +368,26 @@ final class MouseController: ObservableObject {
       ) { [weak self] _ in
         Task { @MainActor [weak self] in
           guard let self else { return }
-          accessibilityGranted = MouseActionDispatcher.accessibilityGranted
-          await applyActionConfiguration()
+          // The user may be returning from the Input Monitoring pane.
+          if connectionState == .permissionRequired,
+            IOHIDDeviceEnumerator().listenAccess == .granted
+          {
+            refresh()
+          } else {
+            await applyActionConfiguration()
+          }
+        }
+      })
+
+    workspaceObservers.append(
+      center.addObserver(
+        forName: NSWorkspace.didTerminateApplicationNotification,
+        object: nil,
+        queue: .main
+      ) { [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self, case .blocked = connectionState else { return }
+          refresh()
         }
       })
   }
@@ -451,6 +473,17 @@ final class MouseController: ObservableObject {
     actionCoordinator.update(configuration: configuration)
     accessibilityGranted = MouseActionDispatcher.accessibilityGranted
     let requests = ControlCapturePlanner.requests(for: configuration)
+    let accessibilityMessage =
+      "Accessibility is required before custom button actions can be enabled."
+
+    // Applying opens a connection. While the mouse is away that would surface raw
+    // transport errors, and loadState applies the configuration once it is back.
+    guard connectionState == .connected else {
+      controlCaptureActive = false
+      actionError =
+        configuration.requiresAccessibility && !accessibilityGranted ? accessibilityMessage : nil
+      return
+    }
 
     if configuration.requiresAccessibility, !accessibilityGranted {
       do {
@@ -460,7 +493,7 @@ final class MouseController: ObservableObject {
         actionError = error.localizedDescription
         return
       }
-      actionError = "Accessibility is required before custom button actions can be enabled."
+      actionError = accessibilityMessage
       return
     }
 

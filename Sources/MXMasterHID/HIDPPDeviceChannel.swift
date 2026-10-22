@@ -61,6 +61,9 @@ public final class HIDPPDeviceChannel: HIDPPChannel, @unchecked Sendable {
   private var pendingResponse: PendingResponse?
   private var eventHandler: (@Sendable (HIDPPMessage) -> Void)?
   private var isClosed = false
+  /// Set when IOHID never confirmed cancellation. The input buffer may still be
+  /// written by a late callback, so it is leaked instead of freed.
+  private var cancellationTimedOut = false
 
   public init(
     identifier: USBIdentifier = HIDDeviceDescriptor.targetIdentifier,
@@ -142,6 +145,7 @@ public final class HIDPPDeviceChannel: HIDPPChannel, @unchecked Sendable {
 
   deinit {
     close()
+    guard !cancellationTimedOut else { return }
     inputBuffer.deinitialize(count: 64)
     inputBuffer.deallocate()
   }
@@ -220,7 +224,9 @@ public final class HIDPPDeviceChannel: HIDPPChannel, @unchecked Sendable {
     responseCondition.unlock()
 
     IOHIDDeviceCancel(device)
-    _ = cancellationSemaphore.wait(timeout: .now() + 1)
+    if cancellationSemaphore.wait(timeout: .now() + 1) == .timedOut {
+      cancellationTimedOut = true
+    }
     IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
     IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
   }
