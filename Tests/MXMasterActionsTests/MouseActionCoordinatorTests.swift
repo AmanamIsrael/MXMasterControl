@@ -119,3 +119,19 @@ private final class SwipeRecorder: @unchecked Sendable {
   #expect(fallback.keyCode == 433)
   #expect(fallback.flags == [.maskNumericPad, .maskSecondaryFn])
 }
+
+@Test func navigationOutputMatchesEachMethod() {
+  #expect(
+    NavigationPoster.output(for: .mouseButton, direction: .back)
+      == .mouseButton(CGMouseButton(rawValue: 3)!))
+  #expect(
+    NavigationPoster.output(for: .mouseButton, direction: .forward)
+      == .mouseButton(CGMouseButton(rawValue: 4)!))
+  #expect(NavigationPoster.output(for: .pageSwipe, direction: .back) == .pageSwipe(.back))
+  #expect(
+    NavigationPoster.output(for: .optionCommandBracket, direction: .forward)
+      == .shortcut(MouseKeyboardShortcut(keyCode: 30, flags: [.maskCommand, .maskAlternate])))
+  #expect(
+    NavigationPoster.output(for: .commandArrow, direction: .back)
+      == .shortcut(MouseKeyboardShortcut(keyCode: 123, flags: .maskCommand)))
+}
