@@ -14,7 +14,8 @@ Bluetooth. The project is intentionally scoped to the device currently under tes
 USB identifier `046d:b023`.
 
 The current build supports live battery/state reporting, DPI, SmartShift, wheel direction,
-secondary-button actions, and native, continuous Space-swipe navigation from the Gesture button.
+secondary-button actions, and native, continuous trackpad-style gestures from the Gesture button:
+Spaces, Mission Control, and App Exposé follow the hand.
 Hardware writes are read back before the UI reports success, and control diversion is temporary
 and restored when the app exits.
 

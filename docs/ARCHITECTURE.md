@@ -39,9 +39,13 @@ but hardware connection and configured controls do not depend on opening the men
   the action model, so a configuration bug cannot disable basic pointing and clicking.
 - Native behavior is the default. If an action needs Accessibility and access is unavailable, the
   app restores native reporting instead of intercepting the button.
-- Gesture interpretation and action planning are pure `MXMasterCore` state. Horizontal desktop
-  gestures emit a streamed begin/change/end sequence so the Space follows the held mouse movement;
-  all macOS event posting remains isolated in `MXMasterActions`.
+- Gesture interpretation and action planning are `MXMasterCore` state. Their only outside input is
+  an injected check of the Dock's trackpad gesture settings. When an axis is mapped to its Dock
+  pair (Desktop Left/Right, or App Exposé/Mission Control), the gesture emits a streamed
+  begin/change/end sequence so the Space or Mission Control follows the held mouse movement. Any
+  other mapping fires one action on release. The Dock ignores a vertical swipe when the matching
+  trackpad gesture is off in System Settings, and App Exposé's is off by default. Such a swipe
+  also fires one action on release. All macOS event posting remains isolated in `MXMasterActions`.
 - A settings change, disconnect, or app shutdown explicitly cancels any in-progress desktop swipe
   before control capture is replaced or closed.
 - The event that ends a desktop swipe is posted again after 200 ms and 500 ms. WindowServer can

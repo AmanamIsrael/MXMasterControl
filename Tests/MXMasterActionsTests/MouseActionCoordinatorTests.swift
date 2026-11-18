@@ -72,8 +72,8 @@ private final class SwipeRecorder: @unchecked Sendable {
   #expect(actionRecorder.actions.isEmpty)
   #expect(
     swipeRecorder.updates == [
-      DesktopSwipeUpdate(phase: .began, deltaX: -50),
-      DesktopSwipeUpdate(phase: .ended, deltaX: 0),
+      DesktopSwipeUpdate(phase: .began, axis: .horizontal, delta: -50),
+      DesktopSwipeUpdate(phase: .ended, axis: .horizontal, delta: 0),
     ])
 }
 
