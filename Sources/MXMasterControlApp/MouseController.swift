@@ -43,6 +43,7 @@ final class MouseController: ObservableObject {
   }
   private let configurationStore: ConfigurationStore
   private let actionCoordinator: MouseActionCoordinator
+  private let trackpadScrolling = TrackpadScrolling()
   // This controller lives for the app's lifetime, so its observers remain registered until exit.
   // That also avoids callbacks racing actor-isolated teardown.
   private var workspaceObservers: [NSObjectProtocol] = []
@@ -90,6 +91,7 @@ final class MouseController: ObservableObject {
     accessibilityGranted = MouseActionDispatcher.accessibilityGranted
     registerLifecycleObservers()
     startDeviceMonitor()
+    applyTrackpadScrolling()
   }
 
   func start() {
@@ -129,6 +131,11 @@ final class MouseController: ObservableObject {
 
   func setAction(_ action: MouseAction, for control: MouseControl) {
     configuration.setAction(action, for: control)
+    persistAndApplyActions()
+  }
+
+  func setTrackpadScrollingEnabled(_ enabled: Bool) {
+    configuration.trackpadScrolling = enabled
     persistAndApplyActions()
   }
 
@@ -519,6 +526,7 @@ final class MouseController: ObservableObject {
   private func applyActionConfiguration() async {
     actionCoordinator.update(configuration: configuration)
     accessibilityGranted = MouseActionDispatcher.accessibilityGranted
+    applyTrackpadScrolling()
     let requests = ControlCapturePlanner.requests(for: configuration)
     let accessibilityMessage =
       "Accessibility is required before custom button actions can be enabled."
@@ -555,6 +563,17 @@ final class MouseController: ObservableObject {
       controlCaptureActive = false
       actionError = error.localizedDescription
     }
+  }
+
+  /// Scrolling runs on its own event tap, so it does not wait for the mouse to connect. It
+  /// needs Accessibility; until that is granted, the wheel keeps scrolling natively.
+  private func applyTrackpadScrolling() {
+    guard configuration.trackpadScrolling, MouseActionDispatcher.accessibilityGranted else {
+      trackpadScrolling.stop()
+      return
+    }
+    // A refused tap is logged by TrackpadScrolling; the wheel keeps scrolling natively.
+    trackpadScrolling.start()
   }
 
   /// Maps a failure to the connection state it should produce. The policy

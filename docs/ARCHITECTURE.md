@@ -8,8 +8,8 @@ hard boundaries around hardware access.
 - `MXMasterCore`: pure, testable value types, HID++ packet models, configuration, and state
   reconciliation.
 - `MXMasterHID`: macOS IOHID discovery, transport, report delivery, and device lifecycle.
-- `MXMasterActions`: gesture/button interpretation handoff, Accessibility checks, and macOS action
-  and phased desktop-swipe posting behind injectable sinks.
+- `MXMasterActions`: gesture/button interpretation handoff, Accessibility checks, macOS action
+  and phased desktop-swipe posting behind injectable sinks, and trackpad-style scrolling.
 - `mxmasterctl`: a permanent diagnostic surface that remains usable without the graphical app.
 - `MXMasterControl`: the SwiftUI menu-bar extra, Settings scene, and AppKit lifecycle integration.
 
@@ -65,6 +65,11 @@ but hardware connection and configured controls do not depend on opening the men
 - Back and Forward pick a method for the frontmost app from a pure routing table in
   `MXMasterCore`: mouse buttons 4 and 5 by default, the trackpad page swipe for Apple apps, and a
   per-app shortcut where ⌘[ would edit text or does nothing.
+- Trackpad-style scrolling is an event tap on its own thread. It swallows non-continuous wheel
+  events and replays them through `ScrollMotion`, a pure model, as continuous scroll events with
+  gesture and momentum phases. Continuous input (trackpads, Magic Mouse) and scrolls with a
+  modifier key pass through. The tap does not depend on the HID++ session: the wheel never leaves
+  native HID reporting, so if the app exits, macOS drops the tap and scrolling stays native.
 - Firmware update commands are permanently outside the project scope.
 
 ## Dependency policy

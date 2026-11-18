@@ -23,6 +23,8 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
   public var controlBindings: [MouseControlBinding]
   public var gestureNavigationEnabled: Bool
   public var gestureActions: GestureActions
+  /// Smooth, phased wheel scrolling with momentum, like a trackpad. Off until the user opts in.
+  public var trackpadScrolling: Bool
 
   public init(
     schemaVersion: Int = Self.currentSchemaVersion,
@@ -32,7 +34,8 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
     wheelInverted: Bool? = nil,
     controlBindings: [MouseControlBinding] = [],
     gestureNavigationEnabled: Bool = false,
-    gestureActions: GestureActions = GestureActions()
+    gestureActions: GestureActions = GestureActions(),
+    trackpadScrolling: Bool = false
   ) {
     self.schemaVersion = schemaVersion
     self.dpi = dpi
@@ -42,6 +45,7 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
     self.controlBindings = controlBindings
     self.gestureNavigationEnabled = gestureNavigationEnabled
     self.gestureActions = gestureActions
+    self.trackpadScrolling = trackpadScrolling
   }
 
   public func action(for control: MouseControl) -> MouseAction {
@@ -56,6 +60,7 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
   }
 
   public var requiresAccessibility: Bool {
+    if trackpadScrolling { return true }
     if controlBindings.contains(where: { $0.action.postsKeyboardEvent }) { return true }
     guard gestureNavigationEnabled else { return false }
     return [
@@ -76,6 +81,7 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
     case controlBindings
     case gestureNavigationEnabled
     case gestureActions
+    case trackpadScrolling
   }
 
   public init(from decoder: Decoder) throws {
@@ -92,6 +98,8 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
     gestureActions =
       try container.decodeIfPresent(GestureActions.self, forKey: .gestureActions)
       ?? GestureActions()
+    trackpadScrolling =
+      try container.decodeIfPresent(Bool.self, forKey: .trackpadScrolling) ?? false
   }
 }
 
