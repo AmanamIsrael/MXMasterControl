@@ -214,3 +214,24 @@ private func synthesizer(
 
   #expect(poster.events.map(\.phase) == [1, 8, 1])
 }
+
+@Test func oneSpaceOfProgressShrinksAsDesktopsAreAdded() {
+  #expect(DesktopSwipeSynthesizer.progressPerSpace(spaceCount: 1) == 2)
+  #expect(DesktopSwipeSynthesizer.progressPerSpace(spaceCount: 2) == 2)
+  #expect(DesktopSwipeSynthesizer.progressPerSpace(spaceCount: 3) == 1.5)
+  #expect(DesktopSwipeSynthesizer.progressPerSpace(spaceCount: 5) == 1.25)
+}
+
+@Test func spacesAreCountedForTheMatchingDisplay() {
+  let entries: [[String: Any]] = [
+    ["Display Identifier": "A", "Spaces": [1, 2]],
+    ["Display Identifier": "B", "Spaces": [1, 2, 3, 4]],
+  ]
+  #expect(DesktopSpaces.count(in: entries, displayIdentifier: "B") == 4)
+  #expect(DesktopSpaces.count(in: entries, displayIdentifier: "C") == nil)
+}
+
+@Test func sharedSpacesAcrossDisplaysUseTheSingleMainEntry() {
+  let entries: [[String: Any]] = [["Display Identifier": "Main", "Spaces": [1, 2, 3]]]
+  #expect(DesktopSpaces.count(in: entries, displayIdentifier: "B") == 3)
+}

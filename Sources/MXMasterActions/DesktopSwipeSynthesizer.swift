@@ -102,6 +102,8 @@ final class DesktopSwipeSynthesizer: @unchecked Sendable {
     pointsToProgress = 0
   }
 
+  /// Converts pointer movement to swipe progress on the display under the pointer, so the
+  /// Space moves exactly as far as the hand: one display width plus the gap between Spaces.
   static func progressScaleAtPointer() -> Double {
     let point = CGEvent(source: nil)?.location ?? .zero
     var display = CGMainDisplayID()
@@ -110,7 +112,18 @@ final class DesktopSwipeSynthesizer: @unchecked Sendable {
       display = CGMainDisplayID()
     }
     let width = max(CGDisplayBounds(display).width, 1)
-    return 2.0 / (width + 63.0)
+    let spaces = DesktopSpaces.count(onDisplay: display) ?? 1
+    return progressPerSpace(spaceCount: spaces) / (width + spaceGap)
+  }
+
+  /// The gap WindowServer draws between neighboring Spaces during a swipe, in points.
+  static let spaceGap = 63.0
+
+  /// The swipe progress that moves exactly one Space. WindowServer scales progress by the
+  /// number of Spaces on the display, so a fixed scale overshoots once there are three or
+  /// more. Mac Mouse Fix measured this curve.
+  static func progressPerSpace(spaceCount: Int) -> Double {
+    spaceCount <= 2 ? 2 : 1 + 1 / Double(spaceCount - 1)
   }
 }
 
