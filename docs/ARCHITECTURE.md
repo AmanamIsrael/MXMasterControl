@@ -44,6 +44,9 @@ but hardware connection and configured controls do not depend on opening the men
   all macOS event posting remains isolated in `MXMasterActions`.
 - A settings change, disconnect, or app shutdown explicitly cancels any in-progress desktop swipe
   before control capture is replaced or closed.
+- The event that ends a desktop swipe is posted again after 200 ms and 500 ms. WindowServer can
+  drop it under load, which leaves the Space transition stuck halfway. A repeat is skipped once the
+  next swipe has started.
 - The undocumented Dock-swipe event encoding required for trackpad-style Space transitions is
   confined to one synthesizer. The rest of the app depends only on typed `DesktopSwipeUpdate`
   values, keeping future macOS-specific changes local.

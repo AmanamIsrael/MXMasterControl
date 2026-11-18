@@ -18,20 +18,31 @@ protocol DesktopSwipeEventPosting: Sendable {
 /// The undocumented event encoding is isolated in the poster so the HID interpretation and the
 /// rest of the action dispatcher stay independent of this OS-specific boundary.
 final class DesktopSwipeSynthesizer: @unchecked Sendable {
+  /// When WindowServer is busy it can drop the event that ends a swipe, and the Space
+  /// transition then stays stuck halfway until the next swipe. Posting the same end event
+  /// again releases it. A repeat that arrives after the transition finished has no effect.
+  /// Mac Mouse Fix found the drop and uses the same two delays.
+  static let defaultEndRepeatDelays: [Duration] = [.milliseconds(200), .milliseconds(500)]
+
   private let poster: DesktopSwipeEventPosting
   private let progressScale: @Sendable () -> Double
+  private let endRepeatDelays: [Duration]
 
   private let lock = NSLock()
   private var progress = 0.0
   private var lastDelta = 0.0
   private var pointsToProgress = 0.0
+  /// Counts gestures, so a repeat scheduled for one gesture never lands inside the next.
+  private var gesture = 0
 
   init(
     poster: DesktopSwipeEventPosting = CGEventDockSwipePoster(),
-    progressScale: @escaping @Sendable () -> Double = DesktopSwipeSynthesizer.progressScaleAtPointer
+    progressScale: @escaping @Sendable () -> Double = DesktopSwipeSynthesizer.progressScaleAtPointer,
+    endRepeatDelays: [Duration] = DesktopSwipeSynthesizer.defaultEndRepeatDelays
   ) {
     self.poster = poster
     self.progressScale = progressScale
+    self.endRepeatDelays = endRepeatDelays
   }
 
   func post(_ update: DesktopSwipeUpdate) {
@@ -40,6 +51,7 @@ final class DesktopSwipeSynthesizer: @unchecked Sendable {
 
     switch update.phase {
     case .began:
+      gesture += 1
       pointsToProgress = progressScale()
       let delta = Double(update.deltaX) * pointsToProgress
       progress = delta
@@ -55,13 +67,33 @@ final class DesktopSwipeSynthesizer: @unchecked Sendable {
     case .ended:
       guard pointsToProgress > 0 else { return }
       let phase: Int64 = progress == 0 || lastDelta.sign == progress.sign ? 4 : 8
-      poster.post(.init(phase: phase, progress: progress, lastDelta: lastDelta))
-      reset()
+      postEnd(.init(phase: phase, progress: progress, lastDelta: lastDelta))
     case .cancelled:
       guard pointsToProgress > 0 else { return }
-      poster.post(.init(phase: 8, progress: progress, lastDelta: lastDelta))
-      reset()
+      postEnd(.init(phase: 8, progress: progress, lastDelta: lastDelta))
     }
+  }
+
+  /// Posts the end of the gesture, then repeats it. Called with the lock held.
+  private func postEnd(_ event: DesktopSwipeGestureEvent) {
+    poster.post(event)
+    reset()
+    let endedGesture = gesture
+    for delay in endRepeatDelays {
+      DispatchQueue.global(qos: .userInteractive).asyncAfter(
+        deadline: .now() + delay.timeInterval
+      ) { [weak self] in
+        self?.repeatEnd(event, of: endedGesture)
+      }
+    }
+  }
+
+  private func repeatEnd(_ event: DesktopSwipeGestureEvent, of endedGesture: Int) {
+    lock.lock()
+    defer { lock.unlock() }
+    // A new swipe has started: its own events now own the transition.
+    guard gesture == endedGesture, pointsToProgress == 0 else { return }
+    poster.post(event)
   }
 
   private func reset() {
@@ -298,5 +330,11 @@ private struct LegacyFieldsDockSwipeEncoder: DockSwipeEncoding {
     }
 
     return [dockEvent, gestureEvent]
+  }
+}
+
+extension Duration {
+  fileprivate var timeInterval: TimeInterval {
+    Double(components.seconds) + Double(components.attoseconds) / 1e18
   }
 }
