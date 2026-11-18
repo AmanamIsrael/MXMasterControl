@@ -154,12 +154,24 @@ public struct DesktopSwipeUpdate: Equatable, Sendable {
     case cancelled
   }
 
-  public let phase: Phase
-  public let deltaX: Int32
+  /// The Dock gesture a swipe drives, as on a trackpad: left and right move between Spaces,
+  /// up and down open Mission Control and App Exposé.
+  public enum Axis: Equatable, Sendable {
+    case horizontal
+    case vertical
+  }
 
-  public init(phase: Phase, deltaX: Int32) {
+  public let phase: Phase
+  public let axis: Axis
+  /// Movement along `axis` in mouse counts, in the Dock's own direction: positive moves toward
+  /// the Space on the right or toward App Exposé, negative toward the Space on the left or toward
+  /// Mission Control. With the default mapping this is also the direction of the hand.
+  public let delta: Int32
+
+  public init(phase: Phase, axis: Axis, delta: Int32) {
     self.phase = phase
-    self.deltaX = deltaX
+    self.axis = axis
+    self.delta = delta
   }
 }
 
@@ -172,12 +184,15 @@ public struct ControlEventInterpreter: Sendable {
   private enum GestureMode: Sendable {
     case undecided
     case discrete
-    case desktopSwipe(directionMultiplier: Int32)
+    case desktopSwipe(axis: DesktopSwipeUpdate.Axis, directionMultiplier: Int32)
   }
 
   private let configuration: MXMasterConfiguration
   private let movementThreshold: Int32
   private let swipeActivationThreshold: Int32
+  /// Whether the Dock's own trackpad gesture for Mission Control or App Exposé is turned on.
+  /// The Dock ignores a swipe toward a gesture that is off.
+  private let isDockGestureEnabled: @Sendable (MouseAction) -> Bool
   private var pressedControls: Set<UInt16> = []
   private var gestureMovementX: Int32 = 0
   private var gestureMovementY: Int32 = 0
@@ -186,11 +201,13 @@ public struct ControlEventInterpreter: Sendable {
   public init(
     configuration: MXMasterConfiguration,
     movementThreshold: Int32 = 40,
-    swipeActivationThreshold: Int32 = 20
+    swipeActivationThreshold: Int32 = 20,
+    isDockGestureEnabled: @escaping @Sendable (MouseAction) -> Bool = { _ in true }
   ) {
     self.configuration = configuration
     self.movementThreshold = movementThreshold
     self.swipeActivationThreshold = swipeActivationThreshold
+    self.isDockGestureEnabled = isDockGestureEnabled
   }
 
   public mutating func handle(_ event: HIDPPControlEvent) -> [MouseInputEffect] {
@@ -201,12 +218,14 @@ public struct ControlEventInterpreter: Sendable {
       gestureMovementY = Int32(clamping: Int64(gestureMovementY) + Int64(dy))
 
       switch gestureMode {
-      case .desktopSwipe(let directionMultiplier):
+      case .desktopSwipe(let axis, let directionMultiplier):
         return [
           .desktopSwipe(
             DesktopSwipeUpdate(
               phase: .changed,
-              deltaX: Int32(clamping: Int64(dx) * Int64(directionMultiplier))
+              axis: axis,
+              delta: Self.swipeDelta(
+                dx: Int64(dx), dy: Int64(dy), axis: axis, multiplier: directionMultiplier)
             ))
         ]
       case .discrete:
@@ -234,9 +253,9 @@ public struct ControlEventInterpreter: Sendable {
       }
 
       if released.contains(MouseControl.gesture.rawValue), configuration.gestureNavigationEnabled {
-        if case .desktopSwipe = gestureMode {
+        if case .desktopSwipe(let axis, _) = gestureMode {
           effects.append(
-            .desktopSwipe(DesktopSwipeUpdate(phase: .ended, deltaX: 0)))
+            .desktopSwipe(DesktopSwipeUpdate(phase: .ended, axis: axis, delta: 0)))
         } else {
           append(gestureAction(), to: &effects)
         }
@@ -255,8 +274,8 @@ public struct ControlEventInterpreter: Sendable {
       gestureMovementY = 0
       gestureMode = .undecided
     }
-    guard case .desktopSwipe = gestureMode else { return nil }
-    return .desktopSwipe(DesktopSwipeUpdate(phase: .cancelled, deltaX: 0))
+    guard case .desktopSwipe(let axis, _) = gestureMode else { return nil }
+    return .desktopSwipe(DesktopSwipeUpdate(phase: .cancelled, axis: axis, delta: 0))
   }
 
   private mutating func activateGestureIfNeeded() -> [MouseInputEffect] {
@@ -264,30 +283,46 @@ public struct ControlEventInterpreter: Sendable {
     let vertical = abs(Int64(gestureMovementY))
     guard max(horizontal, vertical) >= swipeActivationThreshold else { return [] }
 
-    guard horizontal > vertical else {
+    let axis: DesktopSwipeUpdate.Axis = horizontal > vertical ? .horizontal : .vertical
+    guard let directionMultiplier = swipeDirectionMultiplier(for: axis) else {
       gestureMode = .discrete
       return []
     }
 
+    let delta = Self.swipeDelta(
+      dx: Int64(gestureMovementX), dy: Int64(gestureMovementY), axis: axis,
+      multiplier: directionMultiplier)
+    // App Exposé's gesture is off by default in macOS. A swipe the Dock would ignore fires the
+    // action once on release instead, as it did before swipes followed the hand.
+    if axis == .vertical, !isDockGestureEnabled(delta < 0 ? .missionControl : .appExpose) {
+      gestureMode = .discrete
+      return []
+    }
+
+    gestureMode = .desktopSwipe(axis: axis, directionMultiplier: directionMultiplier)
+    return [.desktopSwipe(DesktopSwipeUpdate(phase: .began, axis: axis, delta: delta))]
+  }
+
+  /// A swipe follows the hand only when the axis is mapped to the two actions that Dock
+  /// gesture performs, in either order. Any other mapping fires one action on release.
+  private func swipeDirectionMultiplier(for axis: DesktopSwipeUpdate.Axis) -> Int32? {
     let gestures = configuration.gestureActions
-    let directionMultiplier: Int32
-    if gestures.left == .desktopLeft, gestures.right == .desktopRight {
-      directionMultiplier = 1
-    } else if gestures.left == .desktopRight, gestures.right == .desktopLeft {
-      directionMultiplier = -1
-    } else {
-      gestureMode = .discrete
-      return []
-    }
+    let (negative, positive, pair): (MouseAction, MouseAction, (MouseAction, MouseAction)) =
+      switch axis {
+      case .horizontal: (gestures.left, gestures.right, (.desktopLeft, .desktopRight))
+      case .vertical: (gestures.up, gestures.down, (.missionControl, .appExpose))
+      }
+    if negative == pair.0, positive == pair.1 { return 1 }
+    if negative == pair.1, positive == pair.0 { return -1 }
+    return nil
+  }
 
-    gestureMode = .desktopSwipe(directionMultiplier: directionMultiplier)
-    return [
-      .desktopSwipe(
-        DesktopSwipeUpdate(
-          phase: .began,
-          deltaX: Int32(clamping: Int64(gestureMovementX) * Int64(directionMultiplier))
-        ))
-    ]
+  /// Mouse counts grow downward, which is already the Dock's vertical direction.
+  private static func swipeDelta(
+    dx: Int64, dy: Int64, axis: DesktopSwipeUpdate.Axis, multiplier: Int32
+  ) -> Int32 {
+    let movement = axis == .horizontal ? dx : dy
+    return Int32(clamping: movement * Int64(multiplier))
   }
 
   private func gestureAction() -> MouseAction {

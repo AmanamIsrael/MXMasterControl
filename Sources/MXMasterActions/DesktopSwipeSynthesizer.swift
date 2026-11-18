@@ -5,6 +5,7 @@ import OSLog
 
 /// Carries all the values the poster needs to build and emit the Dock-swipe events.
 struct DesktopSwipeGestureEvent: Equatable, Sendable {
+  let axis: DesktopSwipeUpdate.Axis
   let phase: Int64
   let progress: Double
   let lastDelta: Double
@@ -14,30 +15,33 @@ protocol DesktopSwipeEventPosting: Sendable {
   func post(_ event: DesktopSwipeGestureEvent)
 }
 
-/// Posts the phased Dock gesture that macOS uses for interactive Space transitions.
+/// Posts the phased Dock gesture that macOS uses for interactive Space transitions, Mission
+/// Control and App Exposé.
 /// The undocumented event encoding is isolated in the poster so the HID interpretation and the
 /// rest of the action dispatcher stay independent of this OS-specific boundary.
 final class DesktopSwipeSynthesizer: @unchecked Sendable {
-  /// When WindowServer is busy it can drop the event that ends a swipe, and the Space
-  /// transition then stays stuck halfway until the next swipe. Posting the same end event
-  /// again releases it. A repeat that arrives after the transition finished has no effect.
+  /// When WindowServer is busy it can drop the event that ends a swipe, and the transition
+  /// then stays stuck halfway until the next swipe. Posting the same end event again releases
+  /// it. WindowServer drops a repeat that arrives after the gesture finished.
   /// Mac Mouse Fix found the drop and uses the same two delays.
   static let defaultEndRepeatDelays: [Duration] = [.milliseconds(200), .milliseconds(500)]
 
   private let poster: DesktopSwipeEventPosting
-  private let progressScale: @Sendable () -> Double
+  private let progressScale: @Sendable (DesktopSwipeUpdate.Axis) -> Double
   private let endRepeatDelays: [Duration]
 
   private let lock = NSLock()
   private var progress = 0.0
   private var lastDelta = 0.0
   private var pointsToProgress = 0.0
+  private var axis = DesktopSwipeUpdate.Axis.horizontal
   /// Counts gestures, so a repeat scheduled for one gesture never lands inside the next.
   private var gesture = 0
 
   init(
     poster: DesktopSwipeEventPosting = CGEventDockSwipePoster(),
-    progressScale: @escaping @Sendable () -> Double = DesktopSwipeSynthesizer.progressScaleAtPointer,
+    progressScale: @escaping @Sendable (DesktopSwipeUpdate.Axis) -> Double =
+      DesktopSwipeSynthesizer.progressScaleAtPointer,
     endRepeatDelays: [Duration] = DesktopSwipeSynthesizer.defaultEndRepeatDelays
   ) {
     self.poster = poster
@@ -52,26 +56,30 @@ final class DesktopSwipeSynthesizer: @unchecked Sendable {
     switch update.phase {
     case .began:
       gesture += 1
-      pointsToProgress = progressScale()
-      let delta = Double(update.deltaX) * pointsToProgress
+      axis = update.axis
+      pointsToProgress = progressScale(axis)
+      let delta = Double(update.delta) * pointsToProgress
       progress = delta
       lastDelta = delta
-      poster.post(.init(phase: 1, progress: progress, lastDelta: lastDelta))
+      poster.post(event(phase: 1))
     case .changed:
       guard pointsToProgress > 0 else { return }
-      let delta = Double(update.deltaX) * pointsToProgress
+      let delta = Double(update.delta) * pointsToProgress
       guard delta != 0 else { return }
       progress += delta
       lastDelta = delta
-      poster.post(.init(phase: 2, progress: progress, lastDelta: lastDelta))
+      poster.post(event(phase: 2))
     case .ended:
       guard pointsToProgress > 0 else { return }
-      let phase: Int64 = progress == 0 || lastDelta.sign == progress.sign ? 4 : 8
-      postEnd(.init(phase: phase, progress: progress, lastDelta: lastDelta))
+      postEnd(event(phase: progress == 0 || lastDelta.sign == progress.sign ? 4 : 8))
     case .cancelled:
       guard pointsToProgress > 0 else { return }
-      postEnd(.init(phase: 8, progress: progress, lastDelta: lastDelta))
+      postEnd(event(phase: 8))
     }
+  }
+
+  private func event(phase: Int64) -> DesktopSwipeGestureEvent {
+    DesktopSwipeGestureEvent(axis: axis, phase: phase, progress: progress, lastDelta: lastDelta)
   }
 
   /// Posts the end of the gesture, then repeats it. Called with the lock held.
@@ -102,18 +110,24 @@ final class DesktopSwipeSynthesizer: @unchecked Sendable {
     pointsToProgress = 0
   }
 
-  /// Converts pointer movement to swipe progress on the display under the pointer, so the
-  /// Space moves exactly as far as the hand: one display width plus the gap between Spaces.
-  static func progressScaleAtPointer() -> Double {
+  /// Converts pointer movement to swipe progress on the display under the pointer. Sideways,
+  /// the Space moves exactly as far as the hand: one display width plus the gap between
+  /// Spaces. Vertically, moving one display height opens Mission Control fully.
+  static func progressScaleAtPointer(axis: DesktopSwipeUpdate.Axis) -> Double {
     let point = CGEvent(source: nil)?.location ?? .zero
     var display = CGMainDisplayID()
     var count: UInt32 = 0
     if CGGetDisplaysWithPoint(point, 1, &display, &count) != .success || count == 0 {
       display = CGMainDisplayID()
     }
-    let width = max(CGDisplayBounds(display).width, 1)
-    let spaces = DesktopSpaces.count(onDisplay: display) ?? 1
-    return progressPerSpace(spaceCount: spaces) / (width + spaceGap)
+    let bounds = CGDisplayBounds(display)
+    switch axis {
+    case .horizontal:
+      let spaces = DesktopSpaces.count(onDisplay: display) ?? 1
+      return progressPerSpace(spaceCount: spaces) / (max(bounds.width, 1) + spaceGap)
+    case .vertical:
+      return 1 / max(bounds.height, 1)
+    }
   }
 
   /// The gap WindowServer draws between neighboring Spaces during a swipe, in points.
@@ -177,6 +191,14 @@ extension DesktopSwipeGestureEvent {
   fileprivate var exitSpeed: Double? {
     phase == 4 || phase == 8 ? lastDelta * 100 : nil
   }
+
+  /// WindowServer's dock-swipe motion: 1 moves between Spaces, 2 drives Mission Control.
+  fileprivate var motion: Int {
+    switch axis {
+    case .horizontal: 1
+    case .vertical: 2
+    }
+  }
 }
 
 /// macOS 27 and later. WindowServer ignores the legacy CGEvent fields and reads an IOHIDEvent
@@ -201,7 +223,6 @@ private struct HIDEventDockSwipeEncoder: DockSwipeEncoding {
   private static let velocityX = velocityType << 16 | 0
   private static let velocityY = velocityType << 16 | 1
   private static let velocityZ = velocityType << 16 | 2
-  private static let horizontalMotion = 1
   private static let dockPrimaryFlavor = 3
   /// The gesture phase lives in the event options (kIOHIDEventEventOptionPhaseShift).
   private static let phaseShift: UInt32 = 24
@@ -242,10 +263,11 @@ private struct HIDEventDockSwipeEncoder: DockSwipeEncoding {
       let dockEvent = CGEvent(source: nil)
     else { return nil }
 
-    setInteger(hidEvent, Self.dockSwipeMotion, Self.horizontalMotion)
+    setInteger(hidEvent, Self.dockSwipeMotion, event.motion)
     setInteger(hidEvent, Self.dockSwipeFlavor, Self.dockPrimaryFlavor)
-    // The HID payload runs opposite to the legacy fields: negating keeps the Space moving with
-    // the hand. Progress is stored as 16.16 fixed point, so values below ~0.00002 round to zero.
+    // The HID payload runs opposite to the legacy fields on both axes: negative legacy
+    // progress, which is up toward Mission Control, is positive here. Progress is stored as
+    // 16.16 fixed point, so values below ~0.00002 round to zero.
     setFloat(hidEvent, Self.dockSwipeProgress, -event.progress)
 
     if let exitSpeed = event.exitSpeed {
@@ -330,11 +352,12 @@ private struct LegacyFieldsDockSwipeEncoder: DockSwipeEncoding {
     dockEvent.setIntegerValueField(f135, value: progressBits)
     dockEvent.setDoubleValueField(f41, value: 33_231)
 
-    let horizontalSentinel = Double(Float.leastNonzeroMagnitude)
-    dockEvent.setDoubleValueField(f119, value: horizontalSentinel)
-    dockEvent.setDoubleValueField(f139, value: horizontalSentinel)
-    dockEvent.setDoubleValueField(f123, value: 1)
-    dockEvent.setDoubleValueField(f165, value: 1)
+    // These fields hold the motion twice: once as a number and once as the bits of a Float.
+    let motionBits = Double(Float(bitPattern: UInt32(event.motion)))
+    dockEvent.setDoubleValueField(f119, value: motionBits)
+    dockEvent.setDoubleValueField(f139, value: motionBits)
+    dockEvent.setDoubleValueField(f123, value: Double(event.motion))
+    dockEvent.setDoubleValueField(f165, value: Double(event.motion))
     dockEvent.setIntegerValueField(f136, value: 0)
 
     if let exitSpeed = event.exitSpeed, let f129, let f130 {

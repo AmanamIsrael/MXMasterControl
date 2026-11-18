@@ -30,7 +30,7 @@ public final class MouseActionCoordinator: @unchecked Sendable {
     postAction: @escaping @Sendable (MouseAction) -> Void,
     postDesktopSwipe: @escaping @Sendable (DesktopSwipeUpdate) -> Void = { _ in }
   ) {
-    interpreter = ControlEventInterpreter(configuration: configuration)
+    interpreter = Self.interpreter(for: configuration)
     self.postAction = postAction
     self.postDesktopSwipe = postDesktopSwipe
   }
@@ -38,9 +38,16 @@ public final class MouseActionCoordinator: @unchecked Sendable {
   public func update(configuration: MXMasterConfiguration) {
     lock.lock()
     let cancellation = interpreter.cancelPendingGesture()
-    interpreter = ControlEventInterpreter(configuration: configuration)
+    interpreter = Self.interpreter(for: configuration)
     lock.unlock()
     dispatch(cancellation)
+  }
+
+  private static func interpreter(for configuration: MXMasterConfiguration)
+    -> ControlEventInterpreter
+  {
+    ControlEventInterpreter(
+      configuration: configuration, isDockGestureEnabled: DockGestureSettings.isEnabled)
   }
 
   public func cancelPendingGesture() {
