@@ -25,6 +25,8 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
   public var gestureActions: GestureActions
   /// Smooth, phased wheel scrolling with momentum, like a trackpad. Off until the user opts in.
   public var trackpadScrolling: Bool
+  /// Command-scroll zooms like a trackpad pinch. Off until the user opts in.
+  public var pinchZoom: Bool
 
   public init(
     schemaVersion: Int = Self.currentSchemaVersion,
@@ -35,7 +37,8 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
     controlBindings: [MouseControlBinding] = [],
     gestureNavigationEnabled: Bool = false,
     gestureActions: GestureActions = GestureActions(),
-    trackpadScrolling: Bool = false
+    trackpadScrolling: Bool = false,
+    pinchZoom: Bool = false
   ) {
     self.schemaVersion = schemaVersion
     self.dpi = dpi
@@ -46,6 +49,7 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
     self.gestureNavigationEnabled = gestureNavigationEnabled
     self.gestureActions = gestureActions
     self.trackpadScrolling = trackpadScrolling
+    self.pinchZoom = pinchZoom
   }
 
   public func action(for control: MouseControl) -> MouseAction {
@@ -60,8 +64,8 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
   }
 
   public var requiresAccessibility: Bool {
-    if trackpadScrolling { return true }
-    if controlBindings.contains(where: { $0.action.postsKeyboardEvent }) { return true }
+    if trackpadScrolling || pinchZoom { return true }
+    if controlBindings.contains(where: { $0.action.postsEvents }) { return true }
     guard gestureNavigationEnabled else { return false }
     return [
       gestureActions.click,
@@ -69,7 +73,7 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
       gestureActions.down,
       gestureActions.left,
       gestureActions.right,
-    ].contains(where: \.postsKeyboardEvent)
+    ].contains(where: \.postsEvents)
   }
 
   private enum CodingKeys: String, CodingKey {
@@ -82,6 +86,7 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
     case gestureNavigationEnabled
     case gestureActions
     case trackpadScrolling
+    case pinchZoom
   }
 
   public init(from decoder: Decoder) throws {
@@ -100,6 +105,7 @@ public struct MXMasterConfiguration: Codable, Equatable, Sendable {
       ?? GestureActions()
     trackpadScrolling =
       try container.decodeIfPresent(Bool.self, forKey: .trackpadScrolling) ?? false
+    pinchZoom = try container.decodeIfPresent(Bool.self, forKey: .pinchZoom) ?? false
   }
 }
 

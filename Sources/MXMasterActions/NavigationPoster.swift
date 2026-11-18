@@ -50,29 +50,4 @@ enum NavigationPoster {
       )?.post(tap: .cghidEventTap)
     }
   }
-
-  /// The trackpad's page swipe: a gesture event of the navigation-swipe subtype, began with a
-  /// direction, then ended. The fields are undocumented; Mac Mouse Fix and SensibleSideButtons
-  /// use the same encoding.
-  static func postPageSwipe(_ direction: Direction) {
-    guard
-      let gestureType = CGEventType(rawValue: 29),
-      let subtype = CGEventField(rawValue: 110),
-      let phase = CGEventField(rawValue: 132),
-      let swipeDirection = CGEventField(rawValue: 115),
-      let event = CGEvent(source: nil)
-    else { return }
-    // kIOHIDEventTypeNavigationSwipe, and IOHIDSwipeMask left (back) or right (forward).
-    let navigationSwipe: Int64 = 16
-    let began: Int64 = 1
-    let ended: Int64 = 4
-    event.type = gestureType
-    event.setIntegerValueField(subtype, value: navigationSwipe)
-    event.setIntegerValueField(phase, value: began)
-    event.setIntegerValueField(swipeDirection, value: direction == .back ? 4 : 8)
-    event.post(tap: .cgSessionEventTap)
-    event.setIntegerValueField(swipeDirection, value: 0)
-    event.setIntegerValueField(phase, value: ended)
-    event.post(tap: .cgSessionEventTap)
-  }
 }

@@ -17,6 +17,7 @@ The current build supports live battery/state reporting, DPI, SmartShift, wheel 
 secondary-button actions, and native, continuous trackpad-style gestures from the Gesture button:
 Spaces, Mission Control, and App Exposé follow the hand. Optional trackpad-style scrolling turns
 wheel ticks into smooth, phased scrolling with momentum, for the main wheel and the thumb wheel.
+Command-scroll can zoom like a pinch, and any button or gesture can trigger Smart Zoom.
 Hardware writes are read back before the UI reports success, and control diversion is temporary
 and restored when the app exits.
 

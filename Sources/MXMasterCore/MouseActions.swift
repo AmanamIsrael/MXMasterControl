@@ -28,6 +28,7 @@ public enum MouseAction: String, Codable, CaseIterable, Identifiable, Sendable {
   case showDesktop
   case desktopLeft
   case desktopRight
+  case smartZoom
 
   public var id: String { rawValue }
 
@@ -42,10 +43,12 @@ public enum MouseAction: String, Codable, CaseIterable, Identifiable, Sendable {
     case .showDesktop: "Show Desktop"
     case .desktopLeft: "Desktop Left"
     case .desktopRight: "Desktop Right"
+    case .smartZoom: "Smart Zoom"
     }
   }
 
-  public var postsKeyboardEvent: Bool {
+  /// Whether the action posts input events to macOS, which needs Accessibility.
+  public var postsEvents: Bool {
     self != .systemDefault && self != .disabled
   }
 }
@@ -337,7 +340,7 @@ public struct ControlEventInterpreter: Sendable {
   }
 
   private func append(_ action: MouseAction, to effects: inout [MouseInputEffect]) {
-    guard action.postsKeyboardEvent else { return }
+    guard action.postsEvents else { return }
     effects.append(.action(action))
   }
 }

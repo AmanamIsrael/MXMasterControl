@@ -89,6 +89,8 @@ enum MouseActionRoute: Equatable {
   case systemHotKey(SystemHotKey)
   /// Back or Forward, posted the way the frontmost app understands.
   case navigation(NavigationPoster.Direction)
+  /// A trackpad gesture, posted as the gesture event itself.
+  case smartZoom
 }
 
 public enum MouseActionDispatcher {
@@ -120,9 +122,12 @@ public enum MouseActionDispatcher {
       )
       switch output {
       case .mouseButton(let button): NavigationPoster.postMouseButton(button)
-      case .pageSwipe(let direction): NavigationPoster.postPageSwipe(direction)
+      case .pageSwipe(let direction): TouchGestureEvents.postPageSwipe(direction)
       case .shortcut(let shortcut): post(shortcut)
       }
+    case .smartZoom:
+      logger.info("Posting mouse action: \(action.rawValue, privacy: .public)")
+      TouchGestureEvents.postSmartZoom()
     }
   }
 
@@ -136,6 +141,7 @@ public enum MouseActionDispatcher {
     case .showDesktop: .systemHotKey(.showDesktop)
     case .desktopLeft: .systemHotKey(.moveLeftASpace)
     case .desktopRight: .systemHotKey(.moveRightASpace)
+    case .smartZoom: .smartZoom
     }
   }
 
