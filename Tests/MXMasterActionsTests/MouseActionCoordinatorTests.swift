@@ -93,13 +93,29 @@ private final class SwipeRecorder: @unchecked Sendable {
   #expect(swipeRecorder.updates.last?.phase == .cancelled)
 }
 
-@Test func everyPostableActionHasAKeyboardShortcut() {
+@Test func everyPostableActionHasARoute() {
   for action in MouseAction.allCases {
-    let shortcut = MouseActionDispatcher.shortcut(for: action)
-    #expect((shortcut != nil) == action.postsKeyboardEvent)
+    #expect((MouseActionDispatcher.route(for: action) != nil) == action.postsKeyboardEvent)
   }
-  #expect(MouseActionDispatcher.shortcut(for: .back)?.flags == .maskCommand)
-  #expect(MouseActionDispatcher.shortcut(for: .desktopRight)?.flags == .maskControl)
+  #expect(MouseActionDispatcher.route(for: .missionControl) == .systemHotKey(.missionControl))
+  #expect(MouseActionDispatcher.route(for: .desktopRight) == .systemHotKey(.moveRightASpace))
   #expect(MouseActionDispatcher.modifierKeys(for: .maskControl).map(\.keyCode) == [59])
-  #expect(MouseActionDispatcher.modifierKeys(for: .maskCommand).map(\.keyCode) == [55])
+  #expect(
+    MouseActionDispatcher.modifierKeys(for: [.maskCommand, .maskAlternate]).map(\.keyCode)
+      == [58, 55])
+}
+
+@Test func enabledHotKeyPostsTheUsersBinding() {
+  #expect(
+    SystemHotKeys.usableBinding(enabled: true, keyCode: 126, modifiers: 0x84_0000)
+      == SystemHotKeys.Binding(keyCode: 126, flags: [.maskControl, .maskSecondaryFn]))
+}
+
+@Test func disabledOrUnboundHotKeyNeedsTheUnreachableBinding() {
+  #expect(SystemHotKeys.usableBinding(enabled: false, keyCode: 126, modifiers: 0x4_0000) == nil)
+  #expect(
+    SystemHotKeys.usableBinding(enabled: true, keyCode: SystemHotKeys.unset, modifiers: 0) == nil)
+  let fallback = SystemHotKeys.unreachableBinding(for: .appExpose)
+  #expect(fallback.keyCode == 433)
+  #expect(fallback.flags == [.maskNumericPad, .maskSecondaryFn])
 }

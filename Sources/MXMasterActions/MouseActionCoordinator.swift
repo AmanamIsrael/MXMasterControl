@@ -83,6 +83,14 @@ struct MouseKeyboardShortcut: Equatable {
   let flags: CGEventFlags
 }
 
+/// How an action reaches macOS.
+enum MouseActionRoute: Equatable {
+  /// A system feature, posted through the shortcut the user has bound to it.
+  case systemHotKey(SystemHotKey)
+  /// An app command with a fixed shortcut.
+  case shortcut(MouseKeyboardShortcut)
+}
+
 public enum MouseActionDispatcher {
   private static let logger = Logger(
     subsystem: "com.amanamisrael.MXMasterControl",
@@ -98,12 +106,36 @@ public enum MouseActionDispatcher {
   }
 
   public static func post(_ action: MouseAction) {
-    guard let shortcut = shortcut(for: action) else { return }
-    if action == .missionControl {
-      openMissionControl()
+    switch route(for: action) {
+    case nil:
       return
+    case .systemHotKey(let hotKey):
+      guard let binding = SystemHotKeys.binding(for: hotKey) else { return }
+      logger.info("Posting mouse action: \(action.rawValue, privacy: .public)")
+      post(MouseKeyboardShortcut(keyCode: binding.keyCode, flags: binding.flags))
+    case .shortcut(let shortcut):
+      logger.info("Posting mouse action: \(action.rawValue, privacy: .public)")
+      post(shortcut)
     }
+  }
 
+  static func route(for action: MouseAction) -> MouseActionRoute? {
+    switch action {
+    case .systemDefault, .disabled: nil
+    case .back: .shortcut(MouseKeyboardShortcut(keyCode: 33, flags: .maskCommand))
+    case .forward: .shortcut(MouseKeyboardShortcut(keyCode: 30, flags: .maskCommand))
+    case .missionControl: .systemHotKey(.missionControl)
+    case .appExpose: .systemHotKey(.appExpose)
+    case .showDesktop: .systemHotKey(.showDesktop)
+    case .desktopLeft: .systemHotKey(.moveLeftASpace)
+    case .desktopRight: .systemHotKey(.moveRightASpace)
+    }
+  }
+
+  /// Presses the shortcut's modifier keys, the key, then releases them in reverse order, so
+  /// apps that read modifier state see a real chord. Flags without a key, such as fn, ride on
+  /// the key event.
+  private static func post(_ shortcut: MouseKeyboardShortcut) {
     let source = CGEventSource(stateID: .hidSystemState)
     guard
       let keyDown = CGEvent(
@@ -145,7 +177,6 @@ public enum MouseActionDispatcher {
     }
     keyDown.flags = shortcut.flags
     keyUp.flags = shortcut.flags
-    logger.info("Posting mouse action: \(action.rawValue, privacy: .public)")
     keyDown.post(tap: .cghidEventTap)
     keyUp.post(tap: .cghidEventTap)
     for event in modifierEvents.reversed() {
@@ -155,40 +186,12 @@ public enum MouseActionDispatcher {
     }
   }
 
-  static func shortcut(for action: MouseAction) -> MouseKeyboardShortcut? {
-    switch action {
-    case .systemDefault, .disabled: nil
-    case .back: MouseKeyboardShortcut(keyCode: 33, flags: .maskCommand)
-    case .forward: MouseKeyboardShortcut(keyCode: 30, flags: .maskCommand)
-    case .missionControl: MouseKeyboardShortcut(keyCode: 126, flags: .maskControl)
-    case .appExpose: MouseKeyboardShortcut(keyCode: 125, flags: .maskControl)
-    case .showDesktop: MouseKeyboardShortcut(keyCode: 103, flags: [])
-    case .desktopLeft: MouseKeyboardShortcut(keyCode: 123, flags: .maskControl)
-    case .desktopRight: MouseKeyboardShortcut(keyCode: 124, flags: .maskControl)
-    }
-  }
-
   static func modifierKeys(for flags: CGEventFlags) -> [(
     keyCode: CGKeyCode, flag: CGEventFlags
   )] {
-    var keys: [(CGKeyCode, CGEventFlags)] = []
-    if flags.contains(.maskControl) { keys.append((59, .maskControl)) }
-    if flags.contains(.maskCommand) { keys.append((55, .maskCommand)) }
-    return keys
-  }
-
-  private static func openMissionControl() {
-    let url = URL(fileURLWithPath: "/System/Applications/Mission Control.app")
-    let configuration = NSWorkspace.OpenConfiguration()
-    DispatchQueue.main.async {
-      NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
-        if let error {
-          logger.error(
-            "Mission Control launch failed: \(error.localizedDescription, privacy: .public)")
-        } else {
-          logger.info("Opened Mission Control")
-        }
-      }
-    }
+    let keys: [(CGKeyCode, CGEventFlags)] = [
+      (59, .maskControl), (58, .maskAlternate), (56, .maskShift), (55, .maskCommand),
+    ]
+    return keys.filter { flags.contains($0.1) }
   }
 }
