@@ -23,6 +23,18 @@ struct SettingsView: View {
         )
         .font(.caption)
         .foregroundStyle(.secondary)
+        Toggle(
+          "Zoom with Command-scroll",
+          isOn: Binding(
+            get: { controller.configuration.pinchZoom },
+            set: { controller.setPinchZoomEnabled($0) }
+          )
+        )
+        Text(
+          "Hold Command and turn the main wheel to zoom like a pinch on a trackpad. Turn it away from you to zoom in."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
 
       Section("General") {
@@ -85,7 +97,7 @@ struct SettingsView: View {
 
         if controller.configuration.requiresAccessibility, !controller.accessibilityGranted {
           Text(
-            "Custom actions and trackpad-style scrolling stay off—and the mouse keeps its native behavior—until Accessibility is allowed."
+            "Custom actions, trackpad-style scrolling and zooming stay off—and the mouse keeps its native behavior—until Accessibility is allowed."
           )
           .font(.caption)
           .foregroundStyle(.secondary)

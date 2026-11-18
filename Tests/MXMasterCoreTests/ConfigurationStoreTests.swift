@@ -15,7 +15,8 @@ import Testing
     wheelInverted: true,
     controlBindings: [MouseControlBinding(control: .smartShift, action: .missionControl)],
     gestureNavigationEnabled: true,
-    trackpadScrolling: true
+    trackpadScrolling: true,
+    pinchZoom: true
   )
 
   try store.save(expected)
@@ -36,6 +37,7 @@ import Testing
   #expect(migrated.controlBindings.isEmpty)
   #expect(!migrated.gestureNavigationEnabled)
   #expect(!migrated.trackpadScrolling)
+  #expect(!migrated.pinchZoom)
 }
 
 @Test func configurationStoreRejectsUnknownFutureSchema() throws {

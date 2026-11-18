@@ -9,7 +9,8 @@ hard boundaries around hardware access.
   reconciliation.
 - `MXMasterHID`: macOS IOHID discovery, transport, report delivery, and device lifecycle.
 - `MXMasterActions`: gesture/button interpretation handoff, Accessibility checks, macOS action
-  and phased desktop-swipe posting behind injectable sinks, and trackpad-style scrolling.
+  and phased desktop-swipe posting behind injectable sinks, and trackpad-style scrolling and
+  zooming.
 - `mxmasterctl`: a permanent diagnostic surface that remains usable without the graphical app.
 - `MXMasterControl`: the SwiftUI menu-bar extra, Settings scene, and AppKit lifecycle integration.
 
@@ -68,9 +69,15 @@ but hardware connection and configured controls do not depend on opening the men
 - Trackpad-style scrolling is an event tap on its own thread. It swallows non-continuous wheel
   events and replays them through `ScrollMotion`, a pure model, as continuous scroll events with
   gesture and momentum phases, on both axes: the thumb wheel scrolls sideways, and so does the main
-  wheel with Shift held. Continuous input (trackpads, Magic Mouse) and scrolls with Control,
-  Option or Command pass through. The tap does not depend on the HID++ session: the wheel never leaves
-  native HID reporting, so if the app exits, macOS drops the tap and scrolling stays native.
+  wheel with Shift held. Continuous input (trackpads, Magic Mouse) and scrolls with Control or
+  Option pass through, as does Command-scroll while zooming is off. The tap does not depend on the HID++ session: the wheel never leaves native
+  HID reporting, so if the app exits, macOS drops the tap and scrolling stays native.
+- The same tap turns Command-scroll into a pinch when zooming is on. `PinchMotion`, a pure model,
+  eases each tick out as a magnification gesture event with began, changed and ended phases. A
+  scroll tick ends a pinch in progress, and a zoom tick ends a scroll, as on a trackpad. The Smart
+  Zoom action posts the gesture event of a two-finger double tap. `TouchGestureEvents` owns this
+  private gesture-event encoding, for zoom and for the page swipe of Back and Forward, so apps
+  respond as they do to a trackpad.
 - Firmware update commands are permanently outside the project scope.
 
 ## Dependency policy

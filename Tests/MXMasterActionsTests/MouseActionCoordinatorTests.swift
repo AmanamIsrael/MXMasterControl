@@ -95,10 +95,11 @@ private final class SwipeRecorder: @unchecked Sendable {
 
 @Test func everyPostableActionHasARoute() {
   for action in MouseAction.allCases {
-    #expect((MouseActionDispatcher.route(for: action) != nil) == action.postsKeyboardEvent)
+    #expect((MouseActionDispatcher.route(for: action) != nil) == action.postsEvents)
   }
   #expect(MouseActionDispatcher.route(for: .missionControl) == .systemHotKey(.missionControl))
   #expect(MouseActionDispatcher.route(for: .desktopRight) == .systemHotKey(.moveRightASpace))
+  #expect(MouseActionDispatcher.route(for: .smartZoom) == .smartZoom)
   #expect(MouseActionDispatcher.modifierKeys(for: .maskControl).map(\.keyCode) == [59])
   #expect(
     MouseActionDispatcher.modifierKeys(for: [.maskCommand, .maskAlternate]).map(\.keyCode)

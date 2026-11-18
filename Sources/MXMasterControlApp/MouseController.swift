@@ -139,6 +139,11 @@ final class MouseController: ObservableObject {
     persistAndApplyActions()
   }
 
+  func setPinchZoomEnabled(_ enabled: Bool) {
+    configuration.pinchZoom = enabled
+    persistAndApplyActions()
+  }
+
   func setGestureNavigationEnabled(_ enabled: Bool) {
     configuration.gestureNavigationEnabled = enabled
     persistAndApplyActions()
@@ -209,6 +214,7 @@ final class MouseController: ObservableObject {
     reconnectTask?.cancel()
     reconnectTask = nil
     actionCoordinator.cancelPendingGesture()
+    trackpadScrolling.stop()
     deviceMonitor.stop()
     await service.invalidate()
   }
@@ -529,7 +535,7 @@ final class MouseController: ObservableObject {
     applyTrackpadScrolling()
     let requests = ControlCapturePlanner.requests(for: configuration)
     let accessibilityMessage =
-      "Accessibility is required before custom button actions can be enabled."
+      "Accessibility is required before custom actions, scrolling and zooming can be enabled."
 
     // Applying opens a connection. While the mouse is away that would surface raw
     // transport errors, and loadState applies the configuration once it is back.
@@ -565,15 +571,14 @@ final class MouseController: ObservableObject {
     }
   }
 
-  /// Scrolling runs on its own event tap, so it does not wait for the mouse to connect. It
-  /// needs Accessibility; until that is granted, the wheel keeps scrolling natively.
+  /// Scrolling and zooming run on their own event tap, so they do not wait for the mouse to
+  /// connect. They need Accessibility; until that is granted, the wheel keeps working natively.
   private func applyTrackpadScrolling() {
-    guard configuration.trackpadScrolling, MouseActionDispatcher.accessibilityGranted else {
-      trackpadScrolling.stop()
-      return
-    }
-    // A refused tap is logged by TrackpadScrolling; the wheel keeps scrolling natively.
-    trackpadScrolling.start()
+    var features: TrackpadScrolling.Features = []
+    if configuration.trackpadScrolling { features.insert(.smoothScrolling) }
+    if configuration.pinchZoom { features.insert(.pinchZoom) }
+    // A refused tap is logged by TrackpadScrolling; the wheel keeps working natively.
+    trackpadScrolling.apply(MouseActionDispatcher.accessibilityGranted ? features : [])
   }
 
   /// Maps a failure to the connection state it should produce. The policy
