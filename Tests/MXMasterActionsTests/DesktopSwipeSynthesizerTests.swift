@@ -23,9 +23,11 @@ private final class RecordingPoster: DesktopSwipeEventPosting, @unchecked Sendab
 
 private func synthesizer(
   poster: RecordingPoster,
-  scale: Double = 0.001
+  scale: Double = 0.001,
+  endRepeatDelays: [Duration] = []
 ) -> DesktopSwipeSynthesizer {
-  DesktopSwipeSynthesizer(poster: poster, progressScale: { scale })
+  DesktopSwipeSynthesizer(
+    poster: poster, progressScale: { scale }, endRepeatDelays: endRepeatDelays)
 }
 
 @Test func swipeBeganPostsPhaseOneWithScaledProgress() {
@@ -186,4 +188,29 @@ private func synthesizer(
 
   #expect(poster.events.count == 5)
   #expect(poster.events.map(\.phase) == [1, 2, 2, 2, 8])
+}
+
+@Test func swipeEndIsRepeatedSoADroppedEndCannotStrandTheTransition() async throws {
+  let poster = RecordingPoster()
+  let sut = synthesizer(
+    poster: poster, endRepeatDelays: [.milliseconds(20), .milliseconds(40)])
+
+  sut.post(DesktopSwipeUpdate(phase: .began, deltaX: 500))
+  sut.post(DesktopSwipeUpdate(phase: .ended, deltaX: 0))
+  try await Task.sleep(for: .milliseconds(300))
+
+  let end = DesktopSwipeGestureEvent(phase: 4, progress: 0.5, lastDelta: 0.5)
+  #expect(poster.events.dropFirst() == [end, end, end])
+}
+
+@Test func swipeEndRepeatIsDroppedOnceTheNextSwipeStarts() async throws {
+  let poster = RecordingPoster()
+  let sut = synthesizer(poster: poster, endRepeatDelays: [.milliseconds(60)])
+
+  sut.post(DesktopSwipeUpdate(phase: .began, deltaX: 500))
+  sut.post(DesktopSwipeUpdate(phase: .cancelled, deltaX: 0))
+  sut.post(DesktopSwipeUpdate(phase: .began, deltaX: 100))
+  try await Task.sleep(for: .milliseconds(300))
+
+  #expect(poster.events.map(\.phase) == [1, 8, 1])
 }
