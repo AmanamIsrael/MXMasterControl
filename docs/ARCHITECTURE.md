@@ -47,6 +47,9 @@ but hardware connection and configured controls do not depend on opening the men
 - The event that ends a desktop swipe is posted again after 200 ms and 500 ms. WindowServer can
   drop it under load, which leaves the Space transition stuck halfway. A repeat is skipped once the
   next swipe has started.
+- Swipe progress is scaled by the display width and the number of Spaces on the display under the
+  pointer, so the Space moves as far as the hand. The Space count comes from SkyLight at the start
+  of each swipe.
 - The undocumented Dock-swipe event encoding required for trackpad-style Space transitions is
   confined to one synthesizer. The rest of the app depends only on typed `DesktopSwipeUpdate`
   values, keeping future macOS-specific changes local.
