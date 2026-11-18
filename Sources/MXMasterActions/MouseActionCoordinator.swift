@@ -87,8 +87,8 @@ struct MouseKeyboardShortcut: Equatable {
 enum MouseActionRoute: Equatable {
   /// A system feature, posted through the shortcut the user has bound to it.
   case systemHotKey(SystemHotKey)
-  /// An app command with a fixed shortcut.
-  case shortcut(MouseKeyboardShortcut)
+  /// Back or Forward, posted the way the frontmost app understands.
+  case navigation(NavigationPoster.Direction)
 }
 
 public enum MouseActionDispatcher {
@@ -113,17 +113,24 @@ public enum MouseActionDispatcher {
       guard let binding = SystemHotKeys.binding(for: hotKey) else { return }
       logger.info("Posting mouse action: \(action.rawValue, privacy: .public)")
       post(MouseKeyboardShortcut(keyCode: binding.keyCode, flags: binding.flags))
-    case .shortcut(let shortcut):
-      logger.info("Posting mouse action: \(action.rawValue, privacy: .public)")
-      post(shortcut)
+    case .navigation(let direction):
+      let output = NavigationPoster.frontmostOutput(for: direction)
+      logger.info(
+        "Posting mouse action: \(action.rawValue, privacy: .public) as \(String(describing: output), privacy: .public)"
+      )
+      switch output {
+      case .mouseButton(let button): NavigationPoster.postMouseButton(button)
+      case .pageSwipe(let direction): NavigationPoster.postPageSwipe(direction)
+      case .shortcut(let shortcut): post(shortcut)
+      }
     }
   }
 
   static func route(for action: MouseAction) -> MouseActionRoute? {
     switch action {
     case .systemDefault, .disabled: nil
-    case .back: .shortcut(MouseKeyboardShortcut(keyCode: 33, flags: .maskCommand))
-    case .forward: .shortcut(MouseKeyboardShortcut(keyCode: 30, flags: .maskCommand))
+    case .back: .navigation(.back)
+    case .forward: .navigation(.forward)
     case .missionControl: .systemHotKey(.missionControl)
     case .appExpose: .systemHotKey(.appExpose)
     case .showDesktop: .systemHotKey(.showDesktop)

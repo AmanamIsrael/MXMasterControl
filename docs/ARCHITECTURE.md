@@ -62,6 +62,9 @@ but hardware connection and configured controls do not depend on opening the men
   symbolic hot key API. A user's custom shortcut keeps working. A shortcut the user turned off is
   rebound, for the session only, to a key code no keyboard produces. The feature still runs, and
   the user's keys and saved shortcuts stay as they are.
+- Back and Forward pick a method for the frontmost app from a pure routing table in
+  `MXMasterCore`: mouse buttons 4 and 5 by default, the trackpad page swipe for Apple apps, and a
+  per-app shortcut where ⌘[ would edit text or does nothing.
 - Firmware update commands are permanently outside the project scope.
 
 ## Dependency policy
