@@ -10,6 +10,21 @@ struct SettingsView: View {
         MouseControlsView(controller: controller, compact: false)
       }
 
+      Section("Scrolling") {
+        Toggle(
+          "Trackpad-style scrolling",
+          isOn: Binding(
+            get: { controller.configuration.trackpadScrolling },
+            set: { controller.setTrackpadScrollingEnabled($0) }
+          )
+        )
+        Text(
+          "Smooth scrolling with momentum, like a trackpad. Flick the wheel to glide, and turn it back one notch to stop."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+      }
+
       Section("General") {
         Toggle(
           "Launch MX Master Control at login",
@@ -70,7 +85,7 @@ struct SettingsView: View {
 
         if controller.configuration.requiresAccessibility, !controller.accessibilityGranted {
           Text(
-            "Custom actions remain inactive—and buttons keep their native behavior—until Accessibility is allowed."
+            "Custom actions and trackpad-style scrolling stay off—and the mouse keeps its native behavior—until Accessibility is allowed."
           )
           .font(.caption)
           .foregroundStyle(.secondary)
