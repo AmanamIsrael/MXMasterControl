@@ -16,7 +16,17 @@ final class MouseController: ObservableObject {
     category: "connection"
   )
 
-  @Published private(set) var connectionState: ConnectionState = .connecting
+  @Published private(set) var connectionState: ConnectionState = .connecting {
+    didSet {
+      if connectionState != oldValue { updateMenuBarIconVisibility() }
+    }
+  }
+  /// False while the mouse is away. States that need the user (permission, a blocking app,
+  /// an error) keep the icon, since the icon is how the user reaches the fix.
+  @Published private(set) var menuBarIconVisible = true
+  /// The icon hides only after the mouse has connected once in this run. A first launch
+  /// without the mouse keeps the icon, so a new user does not see the app vanish.
+  private var hasConnected = false
   @Published private(set) var snapshot: MXMasterReadOnlySnapshot?
   @Published private(set) var isBusy = false
   @Published private(set) var configuration: MXMasterConfiguration
@@ -46,6 +56,11 @@ final class MouseController: ObservableObject {
   private var isSleeping = false
   private let deviceMonitor = HIDPPDeviceMonitor()
   private var lastArrivalHandling = Date.distantPast
+  private var menuBarHideTask: Task<Void, Never>?
+
+  /// How long the mouse must stay away before the icon hides. A wake or a dropped
+  /// connection usually recovers within a few seconds, so the icon does not flicker.
+  private static let menuBarHideDelay: Duration = .seconds(5)
 
   /// Independent settings coalesce separately: moving the DPI slider must not
   /// discard a queued wheel toggle (or vice versa).
@@ -432,6 +447,38 @@ final class MouseController: ObservableObject {
     } else {
       refresh()
     }
+  }
+
+  private func updateMenuBarIconVisibility() {
+    if connectionState == .connected { hasConnected = true }
+    guard connectionState.isDisconnected else {
+      cancelMenuBarHide()
+      if !menuBarIconVisible { menuBarIconVisible = true }
+      return
+    }
+    // Sleep is not "away": the wake handler reconnects and sets the next state, which
+    // starts the countdown if the mouse is still missing.
+    guard hasConnected, !isSleeping else {
+      cancelMenuBarHide()
+      return
+    }
+    guard menuBarIconVisible, menuBarHideTask == nil else { return }
+    menuBarHideTask = Task { [weak self] in
+      do {
+        try await Task.sleep(for: Self.menuBarHideDelay)
+      } catch {
+        return
+      }
+      // A cancel can land after the sleep returns but before this resumes.
+      guard let self, !Task.isCancelled, connectionState.isDisconnected else { return }
+      menuBarHideTask = nil
+      menuBarIconVisible = false
+    }
+  }
+
+  private func cancelMenuBarHide() {
+    menuBarHideTask?.cancel()
+    menuBarHideTask = nil
   }
 
   private func startReconnectLoop() {

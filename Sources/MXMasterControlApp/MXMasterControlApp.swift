@@ -8,12 +8,23 @@ struct MXMasterControlApp: App {
   @StateObject private var controller = MouseController.shared
 
   var body: some Scene {
-    MenuBarExtra {
+    MenuBarExtra(isInserted: menuBarIconInserted) {
       MouseControlsView(controller: controller, compact: true)
     } label: {
       menuBarLabel
     }
     .menuBarExtraStyle(.window)
+  }
+
+  /// The icon hides while the mouse is away. Opening the app again shows Settings, so the
+  /// app stays reachable without it.
+  ///
+  /// The scene also writes to this binding when AppKit hides the status item on its own,
+  /// for example while the screen is locked. Those writes are ignored: storing them would
+  /// publish a change, the scene would update the item again, AppKit would report it hidden
+  /// again, and the main thread would spin.
+  private var menuBarIconInserted: Binding<Bool> {
+    Binding(get: { controller.menuBarIconVisible }, set: { _ in })
   }
 
   private var menuBarLabel: some View {
@@ -63,6 +74,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     if CommandLine.arguments.contains("--show-settings") {
       DispatchQueue.main.async { self.showSettings() }
     }
+  }
+
+  /// Opening the running app again (Finder, Spotlight, Launchpad) shows Settings. This is
+  /// the way in while the menu bar icon is hidden.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    showSettings()
+    return false
   }
 
   func showSettings() {

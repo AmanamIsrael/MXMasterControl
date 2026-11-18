@@ -21,6 +21,11 @@ struct SettingsView: View {
         if let error = controller.launchAtLoginError {
           Text(error).font(.caption).foregroundStyle(.red)
         }
+        Text(
+          "The menu bar icon hides while the mouse is away and returns when it reconnects. Open MX Master Control again to show this window."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
       }
 
       Section("Buttons") {
