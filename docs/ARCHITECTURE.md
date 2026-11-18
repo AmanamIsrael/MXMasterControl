@@ -67,8 +67,9 @@ but hardware connection and configured controls do not depend on opening the men
   per-app shortcut where ⌘[ would edit text or does nothing.
 - Trackpad-style scrolling is an event tap on its own thread. It swallows non-continuous wheel
   events and replays them through `ScrollMotion`, a pure model, as continuous scroll events with
-  gesture and momentum phases. Continuous input (trackpads, Magic Mouse) and scrolls with a
-  modifier key pass through. The tap does not depend on the HID++ session: the wheel never leaves
+  gesture and momentum phases, on both axes: the thumb wheel scrolls sideways, and so does the main
+  wheel with Shift held. Continuous input (trackpads, Magic Mouse) and scrolls with Control,
+  Option or Command pass through. The tap does not depend on the HID++ session: the wheel never leaves
   native HID reporting, so if the app exits, macOS drops the tap and scrolling stays native.
 - Firmware update commands are permanently outside the project scope.
 

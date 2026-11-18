@@ -119,3 +119,33 @@ private func distance(_ frames: [ScrollMotion.Frame]) -> Int {
   #expect(!motion.isMoving)
   #expect(motion.interrupt().isEmpty)
 }
+
+@Test func thumbWheelScrollsSideways() {
+  #expect(
+    TrackpadScrolling.wheelDelta(vertical: 0, horizontal: -12, flags: [])
+      == ScrollMotion.Vector(x: -12, y: 0))
+}
+
+@Test func shiftTurnsTheMainWheelSideways() {
+  #expect(
+    TrackpadScrolling.wheelDelta(vertical: 30, horizontal: 0, flags: .maskShift)
+      == ScrollMotion.Vector(x: 30, y: 0))
+}
+
+@Test func otherModifiersKeepTheirNativeMeaning() {
+  #expect(TrackpadScrolling.wheelDelta(vertical: 30, horizontal: 0, flags: .maskControl) == nil)
+  #expect(TrackpadScrolling.wheelDelta(vertical: 30, horizontal: 0, flags: .maskCommand) == nil)
+  #expect(TrackpadScrolling.wheelDelta(vertical: 0, horizontal: 0, flags: []) == nil)
+}
+
+@Test func sidewaysTicksMoveSidewaysOnly() {
+  var motion = ScrollMotion()
+  var frames = motion.tick(ScrollMotion.Vector(x: 30, y: 0), at: 0)
+  var now = 0.0
+  while motion.isMoving, now < 2 {
+    now += 1.0 / 120
+    frames += motion.advance(to: now)
+  }
+  #expect(frames.reduce(0) { $0 + Int($1.dx) } == 30)
+  #expect(frames.allSatisfy { $0.dy == 0 })
+}

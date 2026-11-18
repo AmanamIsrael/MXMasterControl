@@ -6,8 +6,9 @@ import OSLog
 /// Makes mouse-wheel scrolling behave like a trackpad: smooth, phased, with momentum.
 ///
 /// An event tap swallows wheel ticks and `ScrollMotion` replays them as continuous scroll
-/// events. Trackpads and the Magic Mouse already send continuous events, so they pass through
-/// untouched, as do scrolls with a modifier key held. The tap, the frame timer and all motion
+/// events, for both the main wheel and the thumb wheel. Trackpads and the Magic Mouse already
+/// send continuous events, so they pass through untouched, as do scrolls with Control, Option
+/// or Command held. The tap, the frame timer and all motion
 /// state live on one dedicated thread, so a busy main thread cannot stall scrolling. If the
 /// app quits or crashes, macOS removes the tap and the wheel scrolls natively again.
 public final class TrackpadScrolling: @unchecked Sendable {
@@ -121,13 +122,26 @@ public final class TrackpadScrolling: @unchecked Sendable {
   static func wheelDelta(of event: CGEvent) -> ScrollMotion.Vector? {
     guard
       event.getIntegerValueField(.eventSourceUserData) != ScrollEventPoster.marker,
-      event.getIntegerValueField(.scrollWheelEventIsContinuous) == 0,
-      event.flags.isDisjoint(with: [.maskShift, .maskControl, .maskAlternate, .maskCommand]),
-      event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2) == 0
+      event.getIntegerValueField(.scrollWheelEventIsContinuous) == 0
     else { return nil }
-    let dy = event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1)
-    guard dy != 0 else { return nil }
-    return ScrollMotion.Vector(x: 0, y: Double(dy))
+    return wheelDelta(
+      vertical: event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1),
+      horizontal: event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2),
+      flags: event.flags)
+  }
+
+  /// The thumb wheel scrolls sideways (axis 2). Shift turns the main wheel sideways too:
+  /// AppKit does that for line-based wheel events, but not for the continuous events posted
+  /// here, so the swap happens before smoothing. Other modifiers keep their native meaning.
+  static func wheelDelta(vertical: Int64, horizontal: Int64, flags: CGEventFlags)
+    -> ScrollMotion.Vector?
+  {
+    guard flags.isDisjoint(with: [.maskControl, .maskAlternate, .maskCommand]) else { return nil }
+    var delta = ScrollMotion.Vector(x: Double(horizontal), y: Double(vertical))
+    if flags.contains(.maskShift), horizontal == 0 {
+      delta = ScrollMotion.Vector(x: Double(vertical), y: 0)
+    }
+    return delta == .zero ? nil : delta
   }
 
   private func post(_ frames: [ScrollMotion.Frame]) {
