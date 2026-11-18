@@ -57,6 +57,11 @@ but hardware connection and configured controls do not depend on opening the men
 - The undocumented Dock-swipe event encoding required for trackpad-style Space transitions is
   confined to one synthesizer. The rest of the app depends only on typed `DesktopSwipeUpdate`
   values, keeping future macOS-specific changes local.
+- System actions (Mission Control, App Exposé, Show Desktop, and moving between Spaces) post the
+  shortcut that WindowServer has bound to the feature at that moment, read through the private
+  symbolic hot key API. A user's custom shortcut keeps working. A shortcut the user turned off is
+  rebound, for the session only, to a key code no keyboard produces. The feature still runs, and
+  the user's keys and saved shortcuts stay as they are.
 - Firmware update commands are permanently outside the project scope.
 
 ## Dependency policy
