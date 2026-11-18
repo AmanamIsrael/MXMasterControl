@@ -19,7 +19,7 @@ struct SettingsView: View {
           )
         )
         Text(
-          "Smooth scrolling with momentum, like a trackpad. Flick the wheel to glide, and turn it back one notch to stop."
+          "Smooth scrolling with momentum, like a trackpad, for both wheels. Flick the wheel to glide, and turn it back one notch to stop. Hold Shift to scroll sideways with the main wheel."
         )
         .font(.caption)
         .foregroundStyle(.secondary)
