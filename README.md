@@ -87,8 +87,10 @@ swift build -c release
 ./scripts/build-app.sh
 ```
 
-The app stays in the menu bar and keeps its icon visible when the mouse is unavailable so
-permissions and recovery remain accessible.
+The menu bar icon hides when the mouse has been away for 5 seconds. It returns when the mouse
+reconnects. It stays visible when the app needs you: missing permission, a blocking app, or an
+error. It also stays visible until the mouse connects for the first time after launch. Open the
+app again from Finder or Spotlight to show Settings at any time.
 
 The app requests Input Monitoring through Apple's HID access API and links directly to the matching
 System Settings pane when access is missing. Custom actions request Accessibility only when they
